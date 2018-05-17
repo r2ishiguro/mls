@@ -1,0 +1,5 @@
+scripts/run/
+scripts/run_*/
+*~
+run/
+.DS_Store
