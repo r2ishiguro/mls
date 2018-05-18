@@ -241,11 +241,13 @@ func startDirectoryServer(addr string, ks keystore.KeyStore) (*directoryServer, 
 		for {
 			conn, err := l.Accept()
 			if err != nil {
-				log.Printf("directory: Accept() failed: %s", err)
+				if !isEOF(err) {
+					log.Printf("directory: Accept() failed: %s", err)
+				}
 				break
 			}
 			go func(conn net.Conn) {
-				if err := s.handler(conn); err != nil {
+				if err := s.handler(conn); err != nil && !isEOF(err) {
 					log.Printf("directory: %s", err)
 				}
 				conn.Close()

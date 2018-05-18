@@ -140,7 +140,9 @@ func newMessageChannel(port int) (*msgChannel, error) {
 		for {
 			conn, err := c.listener.Accept()
 			if err != nil {
-				log.Printf("msgcast: %s", err)
+				if !isEOF(err) {
+					log.Printf("msgcast: %s", err)
+				}
 				break
 			}
 			addr := conn.RemoteAddr()

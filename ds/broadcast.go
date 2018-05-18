@@ -19,7 +19,7 @@ type broadcaster struct {
 	l net.Listener
 	clients map[string]*client
 	epoch uint32
-	ch chan(broadcastMessage)
+	ch chan(*broadcastMessage)
 	mutex sync.Mutex
 }
 
@@ -49,7 +49,7 @@ func startBroadcaster(addr string) (*broadcaster, error) {
 		l: l,
 		clients: make(map[string]*client),
 		epoch: 0,
-		ch: make(chan broadcastMessage, maxConnections),
+		ch: make(chan *broadcastMessage, maxConnections),
 	}
 	go s.listener()
 	go s.run()
@@ -71,7 +71,9 @@ func (s *broadcaster) listener() {
 	for {
 		conn, err := s.l.Accept()
 		if err != nil {
-			log.Printf("broadcaster: Accept() failed: %s", err)
+			if !isEOF(err) {
+				log.Printf("broadcaster: Accept() failed: %s", err)
+			}
 			break
 		}
 		addr := conn.RemoteAddr()
@@ -109,19 +111,21 @@ func (s *broadcaster) broadcast(pkt []byte) {
 }
 
 func (s *broadcaster) newClient(conn net.Conn) *client {
-	ch := make(chan []byte, queueSize)
 	c := &client{
 		conn: conn,
-		ch: ch,
+		ch: make(chan []byte, queueSize),
 		addr: conn.RemoteAddr().String(),
 	}
 	go func(c *client) {
 		for {
 			msg, pkt, err := packet.UnmarshalHandshake(c.conn)
 			if err != nil {
+				if !isEOF(err) {
+					log.Printf("broadcast: [%s] Unmarshal failed: %s", c.addr, err)
+				}
 				break
 			}
-			s.ch <- broadcastMessage{msg, pkt}
+			s.ch <- &broadcastMessage{msg, pkt}
 		}
 		s.closeClient(c)
 	}(c)
@@ -133,6 +137,7 @@ func (s *broadcaster) newClient(conn net.Conn) *client {
 			}
 			c.conn.SetWriteDeadline(time.Now().Add(broadcastTimeout * time.Second))
 			if _, err := c.conn.Write(pkt); err != nil {
+				log.Printf("broadcast: [%s] Write() failed: %s", c.addr, err)
 				break
 			}
 		}

@@ -8,15 +8,12 @@ import (
 	"bytes"
 	"errors"
 	"log"
-	"sync"
 
 	"github.com/r2ishiguro/mls"
 	"github.com/r2ishiguro/mls/ds"
 	"github.com/r2ishiguro/mls/crypto"
 	"github.com/r2ishiguro/mls/auth"
 	"github.com/r2ishiguro/mls/packet"
-
-	"fmt"
 )
 
 var (
@@ -40,7 +37,6 @@ type Protocol struct {
 	privKeyMap map[string]map[mls.CipherSuite][]byte
 	uik *mls.UserInitKey		// cache of directory[self]
 	self string
-	mutex sync.Mutex
 }
 
 type GroupChannel struct {
@@ -289,18 +285,12 @@ func (p *Protocol) handler(msg *packet.HandshakeMessage, pkt []byte) error {
 	}
 	if channel != nil {	// if a group channel doesn't exist the message will be simply ignored or will cause an error so no need to verify
 		if channel.epoch != 0 && int(msg.PriorEpoch) != channel.epoch + 1 {
-			fmt.Printf("handshake: [%s] epoch mismatch %d vs %d\n", p.self, msg.PriorEpoch, channel.epoch + 1)
 			return ErrVerificationFailure
 		}
 		// the signature of HandshakeMessage has been verified already
 		if !bytes.Equal(msg.IdentityKey, p.sig.PublicKey()) && !channel.state.VerifyProof(msg.IdentityKey, msg.MerkleProof, int(msg.SignerIndex)) {
-			fmt.Printf("handshake: VerifyProof failed: %x\n", msg.MerkleProof)
-			channel.state.merkleTree.TraceTree(func(level int, size int, value interface{}) {
-				fmt.Printf("[%d] %x (%d)\n", level, value.([]byte), size)
-			})
 			return ErrVerificationFailure
 		}
-		fmt.Printf("handshake: [%s] got a message (%d) from %d\n", p.self, msg.PriorEpoch, msg.SignerIndex)
 		channel.epoch = int(msg.PriorEpoch)
 	}
 
@@ -356,13 +346,12 @@ func (p *Protocol) handler(msg *packet.HandshakeMessage, pkt []byte) error {
 					return err
 				}
 				channel.epoch = int(msg.PriorEpoch)
-				fmt.Printf("handshake: [%s] init for \"%s\", epoch = %d, path = %x, size = %d\n", p.self, msg.GIK.GroupId, msg.PriorEpoch, msg.GIK.MerkleFrontier, msg.GIK.GroupSize)
 			}
 
 			// should renew the UIK and register it to the directory service
-//			if _, err := p.generateUIK(); err != nil {
-//				return err
-//			}
+			if _, err := p.generateUIK(); err != nil {
+				return err
+			}
 		} else {
 			if channel == nil {
 				// not my group or not yet received the GroupAdd to itself above

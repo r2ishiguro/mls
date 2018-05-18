@@ -16,10 +16,10 @@ import (
 )
 
 func main() {
-	addrp := flag.String("addr", "localhost:9897", "server address")
-	dirAddrp := flag.String("dir", "localhost:9898", "directory service address")
-	msgAddrp := flag.String("msg", "localhost:9899", "directory service address")
-	portRangep := flag.String("port", "9900-9999", "port range")
+	addrp := flag.String("addr", ":9897", "server address")
+	dirAddrp := flag.String("dir", ":9898", "directory service address")
+	msgAddrp := flag.String("msg", ":9899", "message service address")
+	portRangep := flag.String("port", "9900-9999", "message port range")
 	flag.Parse()
 
 	ks := simplekv.New()

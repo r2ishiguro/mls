@@ -8,8 +8,6 @@ import (
 	"bytes"
 
 	"github.com/r2ishiguro/mls/lbt"
-
-	"fmt"
 )
 
 type MerkleTree struct {
@@ -87,13 +85,8 @@ func (mt *MerkleTree) Copy() *MerkleTree {
 }
 
 func (mt *MerkleTree) Verify(value []byte, proof [][]byte, idx int) bool {
-	val, path := calculate(idx, value, proof, mt.Size(), mt.h())
-	// return bytes.Equal(val, mt.rootHash)
-	if !bytes.Equal(val, mt.rootHash) {
-		fmt.Printf("merkle: Verify failed: %x\n", path)
-		return false
-	}
-	return true
+	val, _ := calculate(idx, value, proof, mt.Size(), mt.h())
+	return bytes.Equal(val, mt.rootHash)
 }
 
 func (mt *MerkleTree) Calculate(idx int, leaf []byte) ([]byte, []interface{}) {

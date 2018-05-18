@@ -6,8 +6,14 @@ package ds
 import (
 	"net"
 	"io"
+	"errors"
+	"strings"
 
 	"github.com/r2ishiguro/mls/ds/keystore"
+)
+
+var (
+	ErrInsufficient = errors.New("insufficient data has been sent")
 )
 
 //
@@ -31,7 +37,7 @@ func NewClient(addr string) *DeliveryService {
 }
 
 //
-// Dilivery Service client
+// Delivery Service client
 //
 func (ds *DeliveryService) Run(client DeliveryServiceClientInterface) error {
 	conn, err := net.Dial("tcp", ds.addr)
@@ -42,7 +48,7 @@ func (ds *DeliveryService) Run(client DeliveryServiceClientInterface) error {
 
 	for {
 		if err = client.Handler(conn); err != nil {		// let the Handler to handle the error as well
-			if err == io.EOF {
+			if isEOF(err) {
 				err = nil
 			}
 			return err
@@ -51,8 +57,14 @@ func (ds *DeliveryService) Run(client DeliveryServiceClientInterface) error {
 }
 
 func (ds *DeliveryService) Send(data []byte) error {
-	_, err := ds.conn.Write(data)
-	return err
+	n, err := ds.conn.Write(data)
+	if err != nil {
+		return err
+	}
+	if n != len(data) {
+		return ErrInsufficient
+	}
+	return nil
 }
 
 func (ds *DeliveryService) Close() {
@@ -120,4 +132,16 @@ func (s *Server) Close() {
 		s.message.stop()
 		s.message = nil
 	}
+}
+
+func isEOF(err error) bool {
+	if err == io.EOF {
+		return true
+	}
+	// ssrly!?
+	str := err.Error()
+	if strings.Contains(str, "use of closed network connection") {
+		return true
+	}
+	return false
 }
