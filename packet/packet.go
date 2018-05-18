@@ -6,7 +6,6 @@ package packet
 import (
 	"io"
 	"bytes"
-	"bufio"
 	"encoding/binary"
 	"errors"
 
@@ -166,11 +165,10 @@ func MarshalHandshake(msg *HandshakeMessage, sig crypto.IdentitySignature) ([]by
 
 func UnmarshalHandshake(r io.Reader) (*HandshakeMessage, []byte, error) {
 	var msg HandshakeMessage
-	bio := bufio.NewReader(r)
 
 	// read the header
 	var header [4]byte
-	if _, err := io.ReadFull(bio, header[:]); err != nil {
+	if _, err := io.ReadFull(r, header[:]); err != nil {
 		return nil, nil, err
 	}
 	var t [4]byte
@@ -181,7 +179,7 @@ func UnmarshalHandshake(r io.Reader) (*HandshakeMessage, []byte, error) {
 		return nil, nil, io.ErrUnexpectedEOF
 	}
 	data := make([]byte, len(header) + int(innerlen))
-	if _, err := io.ReadFull(bio, data[len(header):]); err != nil {
+	if _, err := io.ReadFull(r, data[len(header):]); err != nil {
 		return nil, nil, err
 	}
 	copy(data[:len(header)], header[:])
