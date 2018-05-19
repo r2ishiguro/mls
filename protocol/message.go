@@ -102,8 +102,9 @@ func (m *Message) Receive() ([]byte, error) {
 	noncepos := keypos - aead.NonceSize()
 	epochpos := noncepos - 4	// sizeof uint32
 	tagpos := epochpos - aead.Overhead()
-	signature := ciphertext[sigpos:]
-	nonce := ciphertext[noncepos:sigpos]
+	signature := ciphertext[sigpos:algopos]
+	key := ciphertext[keypos:sigpos]
+	nonce := ciphertext[noncepos:keypos]
 	epoch := binary.BigEndian.Uint32(ciphertext[epochpos:noncepos])
 	if epoch != m.channel.state.Epoch() {
 		return nil, crypto.ErrKeyGenerationMismatch
@@ -111,7 +112,7 @@ func (m *Message) Receive() ([]byte, error) {
 	tag := ciphertext[tagpos:noncepos]	// including epoch
 
 	// verify the signature
-	sig.Initialize(ciphertext[keypos:keypos+keysize], nil)
+	sig.Initialize(key, nil)
 	if err := sig.Verify(tag, signature); err != nil {
 		return nil, err
 	}

@@ -16,7 +16,7 @@ import (
 const (
 	testAddr = "localhost:9897"
 	numTests = 10
-	bufSize = 1024*1024
+	testBufSize = 1024*1024
 )
 
 type Client struct {
@@ -39,7 +39,7 @@ func TestNet(t *testing.T) {
 			fmt.Printf("accepted %s\n", conn.RemoteAddr().String())
 			conns = append(conns, conn)
 			go func(conn net.Conn) {
-				buf := make([]byte, bufSize)
+				buf := make([]byte, testBufSize)
 				bio := bufio.NewReader(conn)
 				for {
 					n, err := io.ReadFull(bio, buf)
@@ -78,7 +78,7 @@ func TestNet(t *testing.T) {
 		c := Client{conn, nclients}
 		go func(c *Client) {
 			var epoch = 0
-			buf := make([]byte, bufSize)
+			buf := make([]byte, testBufSize)
 			bio := bufio.NewReader(c.conn)
 			for {
 				n, err := io.ReadFull(bio, buf)
@@ -111,7 +111,7 @@ func TestNet(t *testing.T) {
 	time.Sleep(100 * time.Millisecond)
 
 	c := clients[0]
-	buf := make([]byte, bufSize)
+	buf := make([]byte, testBufSize)
 	for i := 0; i < numTests; i++ {
 		buf[0] = byte(i)
 		n, err := c.conn.Write(buf)

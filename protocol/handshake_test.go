@@ -15,6 +15,7 @@ import (
 	"github.com/r2ishiguro/mls/ds"
 	"github.com/r2ishiguro/mls/ds/keystore/simplekv"
 	"github.com/r2ishiguro/mls/packet"
+	"github.com/r2ishiguro/mls/crypto/aesgcm"
 )
 
 const (
@@ -25,7 +26,7 @@ const (
 )
 
 var (
-	channelPorts = [2]int{9900, 9999}
+	channelPorts = [2]int{9901, 9999}
 	ciphers = []mls.CipherSuite{	// it's not guaranteed to generate keys for all ciphers
 		mls.CipherX25519WithSHA256,
 		mls.CipherP256R1WithSHA256,
@@ -37,12 +38,19 @@ var (
 )
 
 func TestHandshake(t *testing.T) {
+	server, _, err := testHandshake()
+	server.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+}
+
+func testHandshake() (*ds.Server, *GroupChannel, error) {
 	// start the servers
 	server := ds.NewServer(deliveryAddress, directoryAddress, messageAddress, channelPorts, simplekv.New())
 	if err := server.Start(); err != nil {
-		t.Fatal(err)
+		return nil, nil, err
 	}
-	defer server.Close()
 	time.Sleep(time.Second)
 
 	clients := make(map[string]*Protocol)
@@ -52,25 +60,25 @@ func TestHandshake(t *testing.T) {
 		auth := NewDummAuth(user)
 		sig, err := mls.NewSignature(mls.SignatureECDSA)
 		if err != nil {
-			t.Fatal(err)
+			return nil, nil, err
 		}
 		pub, priv, err := sig.Generate()
 		if err != nil {
-			t.Fatal(err)
+			return nil, nil, err
 		}
 		sig.Initialize(pub, priv)
 		auth.Register(pub, user)
 		dir := ds.NewDirectoryService(directoryAddress)
-		clients[user] = New(user, dir, sig, auth, nil)
+		clients[user] = New(user, dir, sig, auth, aesgcm.NewAESGCM())
 		if err := clients[user].Connect(deliveryAddress); err != nil {
-			t.Fatal(err)
+			return nil, nil, err
 		}
-		defer clients[user].Close()
 		go func(client *Protocol) {
 			err := client.Run()
-			fmt.Printf("[%s] finished\n", client.self)
 			if err != nil {
-				t.Fatal(err)	// @@ we can do this??
+				fmt.Printf("[%s] finished with %s\n", client.self, err)
+			} else {
+				fmt.Printf("[%s] finished\n", client.self)
 			}
 		}(clients[user])
 	}
@@ -78,10 +86,10 @@ func TestHandshake(t *testing.T) {
 	self := clients[me]
 	channel, err := self.NewGroupChannelWithGID(gid, mls.CipherP256R1WithSHA256)
 	if err != nil {
-		t.Fatal(err)
+		return nil, nil, err
 	}
 	if err := channel.AddMembers(peers); err != nil {
-		t.Fatal(err)
+		return nil, nil, err
 	}
 
 	// wait for all clients to receive the request
@@ -104,13 +112,14 @@ func TestHandshake(t *testing.T) {
 
 	// all clients should have the same tree -- checking the message key should be enough
 	if len(keys) < len(clients) {
-		t.Fatalf("some clients couldn't receive the message")
+		return nil, nil, fmt.Errorf("some clients couldn't receive the message")
 	}
 	for user, k := range keys {
 		if !bytes.Equal(keys[me], k) {
-			t.Errorf("%s: message key mismatch", user)
+			return nil, nil, fmt.Errorf("%s: message key mismatch", user)
 		}
 	}
+	return server, channel, nil
 }
 
 func TestAddMembers(t *testing.T) {

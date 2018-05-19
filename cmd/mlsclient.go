@@ -60,9 +60,6 @@ func main() {
 	}
 	// choose AES/GCM as the encryption scheme
 	aead := aesgcm.NewAESGCM()
-	if err != nil {
-		log.Fatal(err)
-	}
 	// check if the identity key is already in the auth server
 	pub, priv, err := readIdentityKey(keypath)
 	if err != nil {

@@ -5,12 +5,14 @@ package ds
 
 import (
 	"net"
-	"io/ioutil"
+	"io"
 	"sync"
 	"errors"
 	"fmt"
 	"log"
 )
+
+const bufSize = 1024
 
 var (
 	ErrNoMoreChannel = errors.New("no more channels")
@@ -25,14 +27,14 @@ type MessageService struct {
 
 func NewMessageService(msgAddr string, gid string) (*MessageService, error) {
 	conn, err := net.Dial("tcp", msgAddr)
-	defer conn.Close()
 	if err != nil {
 		return nil, err
 	}
+	defer conn.Close()
 	if _, err := conn.Write([]byte(gid)); err != nil {
 		return nil, err
 	}
-	res, err := ioutil.ReadAll(conn)
+	res, err := readUp(conn)
 	if err != nil {
 		return nil, err
 	}
@@ -51,13 +53,18 @@ func NewMessageService(msgAddr string, gid string) (*MessageService, error) {
 }
 
 func (m *MessageService) Send(data []byte) error {
-	_, err := m.conn.Write(data)
-	return err
+	n, err := m.conn.Write(data)
+	if err != nil {
+		return err
+	}
+	if n != len(data) {
+		return ErrInsufficient
+	}
+	return nil
 }
 
 func (m *MessageService) Receive() ([]byte, error) {
-	pkt, err := ioutil.ReadAll(m.conn)
-	return pkt, err
+	return readUp(m.conn)
 }
 
 func (m *MessageService) Close() {
@@ -97,7 +104,7 @@ func startMessageCast(addr string, portRange [2]int) (*msgcast, error) {
 			if err != nil {
 				break
 			}
-			pkt, err := ioutil.ReadAll(conn)
+			pkt, err := readUp(conn)
 			if err == nil {
 				gid := string(pkt)
 				channel, ok := s.channels[gid]
@@ -169,7 +176,7 @@ func (c *msgChannel) close() {
 func (c *msgChannel) newClient(conn net.Conn) net.Conn {
 	go func(conn net.Conn) {
 		for {
-			pkt, err := ioutil.ReadAll(conn)
+			pkt, err := readUp(conn)
 			if err != nil {
 				break
 			}
@@ -190,4 +197,19 @@ func (c *msgChannel) newClient(conn net.Conn) net.Conn {
 		conn.Close()
 	}(conn)
 	return conn
+}
+
+func readUp(r io.Reader) ([]byte, error) {
+	buf := make([]byte, bufSize)
+	n, err := r.Read(buf)
+	if err != nil {
+		if isEOF(err) {
+			err = io.EOF
+		}
+		return nil, err
+	}
+	if n == 0 {
+		return nil, io.EOF
+	}
+	return buf[:n], nil
 }
