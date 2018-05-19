@@ -26,12 +26,10 @@ func main() {
 	var portRange [2]int
 	fmt.Scanf(*portRangep, "%d-%d", &portRange[0], &portRange[1])
 	server := ds.NewServer(*addrp, *dirAddrp, *msgAddrp, portRange, ks)
-	go func(server *ds.Server) {
-		if err := server.Start(); err != nil {
-			log.Fatal(err)
-			return
-		}
-	}(server)
+	if err := server.Start(); err != nil {
+		log.Fatal(err)
+		return
+	}
 
 	// wait for a signal
 	ch := make(chan os.Signal, 1)
