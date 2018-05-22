@@ -68,8 +68,10 @@ func (ds *DeliveryService) Send(data []byte) error {
 }
 
 func (ds *DeliveryService) Close() {
-	ds.conn.Close()
-	ds.conn = nil
+	if ds.conn != nil {
+		ds.conn.Close()
+		ds.conn = nil
+	}
 }
 
 //

@@ -24,7 +24,7 @@ func main() {
 
 	ks := simplekv.New()
 	var portRange [2]int
-	fmt.Scanf(*portRangep, "%d-%d", &portRange[0], &portRange[1])
+	fmt.Sscanf(*portRangep, "%d-%d", &portRange[0], &portRange[1])
 	server := ds.NewServer(*addrp, *dirAddrp, *msgAddrp, portRange, ks)
 	if err := server.Start(); err != nil {
 		log.Fatal(err)

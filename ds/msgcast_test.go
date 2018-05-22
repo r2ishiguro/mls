@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"time"
 	"bytes"
+	"io"
 )
 
 const (
@@ -31,6 +32,7 @@ func TestMessage(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	defer msgcast.stop()
 
 	var messageTests []*messageTest
 	for i := 0; i < ngroups; i++ {
@@ -63,14 +65,13 @@ func TestMessage(t *testing.T) {
 	for _, mt := range messageTests {
 		mt.m.Close()
 	}
-	msgcast.stop()
 }
 
 func runMessage(prompt string, m *MessageService, org string) error {
 	for {
 		msg, err := m.Receive()
 		if err != nil {
-			if !isEOF(err) {
+			if err != io.EOF {
 				return err
 			}
 			fmt.Printf("%s: EOF\n", prompt)

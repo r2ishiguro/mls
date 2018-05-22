@@ -39,11 +39,16 @@ type Protocol struct {
 	self string
 }
 
+type Peer struct {
+	uid string
+	identityKey []byte
+}
+
 type GroupChannel struct {
 	gid string
 	state *GroupState
 	dh crypto.GroupOperation	// corresponding to the cipher suite
-	uids map[string]int		// map of uid(string) to a leaf index
+	peers map[int]*Peer		// map of the leaf index to UID and IdentityKey
 	message *Message
 	protocol *Protocol
 	epoch int
@@ -113,8 +118,8 @@ func (p *Protocol) newGroupChannel(gid string, cipher mls.CipherSuite, gik *mls.
 	if err != nil {
 		return nil, err
 	}
-	channel.uids = make(map[string]int)
-	channel.uids[p.self] = idx
+	channel.peers = make(map[int]*Peer)
+	channel.peers[idx] = &Peer{p.self, p.sig.PublicKey()}
 	p.channels[gid] = channel
 	return channel, nil
 }
@@ -187,8 +192,15 @@ func (c *GroupChannel) Update(privKeys [][]byte) error {
 }
 
 func (c *GroupChannel) Delete(member string) error {
-	idx, ok := c.uids[member]
-	if !ok {
+	// lookup the leaf index from the UID
+	idx := -1
+	for i, peer := range c.peers {
+		if member == peer.uid {
+			idx = i
+			break
+		}
+	}
+	if idx < 0 {
 		return ErrUserNotFound
 	}
 	ng, err := c.state.Copy()
@@ -211,8 +223,8 @@ func (c *GroupChannel) Delete(member string) error {
 
 func (c *GroupChannel) List() []string {
 	var res []string
-	for uid, _ := range c.uids {
-		res = append(res, uid)
+	for _, peer := range c.peers {
+		res = append(res, peer.uid)
 	}
 	return res
 }
@@ -221,7 +233,8 @@ func (c *GroupChannel) Close() {
 	if c.message != nil {
 		c.message.Close()
 	}
-	delete(c.protocol.channels, c.gid)
+	delete(c.protocol.channels, c.gid)	// remove from the channels to prevent double Close
+	c.Delete(c.protocol.self)		// then broadcast the Delete message too all but self
 }
 
 // join an existing group (UserAdd)
@@ -258,9 +271,17 @@ func (p *Protocol) Join(gid string) (*GroupChannel, error) {
 	return channel, nil
 }
 
+func (p *Protocol) UId() string {
+	return p.self
+}
+
 func (p *Protocol) Close() {
 	for _, c := range p.channels {
 		c.Close()
+	}
+	if p.uik != nil {
+		// self user ID / UIK should've been registered
+		p.directory.DeleteUser(p.self)
 	}
 }
 
@@ -325,7 +346,7 @@ func (p *Protocol) handler(msg *packet.HandshakeMessage, pkt []byte) error {
 			if err != nil {
 				return err
 			}
-			channel.uids[uid] = idx
+			channel.peers[idx] = &Peer{uid, msg.IdentityKey}
 		}
 		init = true
 	case packet.HandshakeGroupAdd:
@@ -361,11 +382,7 @@ func (p *Protocol) handler(msg *packet.HandshakeMessage, pkt []byte) error {
 			if err != nil {
 				return err
 			}
-			channel.uids[uid] = idx
-		}
-		if uid == p.self {	// this message has been made by myself
-			// anyone who did GroupAdd is responsible for updating the GroupInitKey
-			p.directory.RegisterGIK(msg.GIK.GroupId, msg.GIK)
+			channel.peers[idx] = &Peer{uid, uik.IdentityKey}
 		}
 		init = true
 	case packet.HandshakeUpdate:
@@ -376,10 +393,17 @@ func (p *Protocol) handler(msg *packet.HandshakeMessage, pkt []byte) error {
 		channel.state.UpdatePath(path)
 	case packet.HandshakeDelete:
 		if channel == nil {
+			if bytes.Equal(msg.IdentityKey, p.sig.PublicKey()) {
+				return nil	// sent by self and the channel already has been closed
+			}
 			return ErrGroupNotFound
 		}
 		del := msg.Data.(*packet.Delete)
-		if int(del.Index) == channel.uids[p.self] {
+		peer, ok := channel.peers[int(del.Index)]
+		if !ok {
+			return ErrUserNotFound
+		}
+		if peer.uid == p.self {
 			channel.Close()		// delete me
 		} else {
 			channel.state.DeletePath(del.Path)
@@ -389,6 +413,14 @@ func (p *Protocol) handler(msg *packet.HandshakeMessage, pkt []byte) error {
 	}
 	if err := channel.state.KeyScheduling(init, pkt); err != nil {
 		return err
+	}
+	// someone initiated the message is responsible to update GIK
+	if bytes.Equal(msg.IdentityKey, p.sig.PublicKey()) {
+		gik, err := channel.state.ConstructGroupInitKey()
+		if err != nil {
+			return err
+		}
+		p.directory.RegisterGIK(gik.GroupId, gik)
 	}
 	return nil
 }

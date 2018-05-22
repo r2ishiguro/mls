@@ -24,7 +24,7 @@ import (
 const (
 	defaultDSAddr = "localhost:9897"
 	defaultDirAddr = "localhost:9898"
-	defaultMsgAddr = "localhost:9999"
+	defaultMsgAddr = "localhost:9899"
 
 	identityPubName = "idkey.pub"
 	identityPrivName = "idkey.priv"
@@ -79,15 +79,6 @@ func main() {
 
 	dir := ds.NewDirectoryService(*dirAddrp)
 	client := protocol.New(uid, dir, sig, auth, aead)
-	if err := client.Connect(*dsAddrp); err != nil {
-		log.Fatal(err)
-	}
-	fail := make(chan error, 1)
-	go func(client *protocol.Protocol) {
-		err := client.Run()
-		fail <- err
-	}(client)
-	defer client.Close()
 
 	switch (av[0]) {
 	case "join":
@@ -95,17 +86,14 @@ func main() {
 			flag.Usage()
 			return
 		}
-		channel := getChannel(client, av[1])
-		echo(channel, *msgAddrp, uid, fail)
-		dir.DeleteUser(uid)
+		echo(av[1], *dsAddrp, *msgAddrp, client)
 	case "add":
 		if ac < 2 {
 			flag.Usage()
 			return
 		}
-		channel := getChannel(client, av[1])
-		add(channel, av[2:])
-	case "ls":	// list all groups
+		add(av[1], av[2:], *dsAddrp, client)
+	case "groups":	// list all groups
 		for _, gid := range dir.ListGroups() {
 			fmt.Printf("%s\n", gid)
 		}
@@ -113,23 +101,41 @@ func main() {
 		for _, uid := range dir.ListUsers() {
 			fmt.Printf("%s\n", uid)
 		}
+	default:
+		flag.Usage()
 	}
+	client.Close()
 }
 
-func getChannel(client *protocol.Protocol, gid string) *protocol.GroupChannel {
+func startChannel(client *protocol.Protocol, addr string, gid string) *protocol.GroupChannel {
+	if err := client.Connect(addr); err != nil {
+		log.Fatal(err)
+	}
+	go func(client *protocol.Protocol) {
+		err := client.Run()
+		client.Close()
+		if err != nil {
+			log.Print(err)
+		}
+	}(client)
+
 	// try to join an existing group
 	channel, err := client.Join(gid)
 	if err == protocol.ErrGroupNotFound {
 		// the group doesn't exist, then create the new one
 		channel, err = client.NewGroupChannelWithGID(gid, mls.CipherP256R1WithSHA256)
+		if err == nil {
+			err = channel.AddMembers([]string{client.UId()})
+		}
 	}
 	if err != nil {
-		log.Fatal(err)
+		log.Fatalf("joining error: %s", err)
 	}
 	return channel
 }
 
-func echo(channel *protocol.GroupChannel, msgAddr string, uid string, fail chan error) {
+func echo(gid string, dsAddr string, msgAddr string, client *protocol.Protocol) {
+	channel := startChannel(client, dsAddr, gid)
 	sig := make(chan os.Signal, 3)
 	signal.Notify(sig, syscall.SIGINT, syscall.SIGABRT, syscall.SIGQUIT, syscall.SIGTERM)
 
@@ -143,6 +149,7 @@ func echo(channel *protocol.GroupChannel, msgAddr string, uid string, fail chan 
 		for {
 			text, err := r.ReadString('\n')
 			if err != nil {
+				log.Print(err)
 				break
 			}
 			m.Send([]byte(text))
@@ -152,37 +159,34 @@ func echo(channel *protocol.GroupChannel, msgAddr string, uid string, fail chan 
 
 	go func(m *protocol.Message) {
 		for {
-			msg, err := m.Receive()
+			msg, sender, err := m.Receive()
 			if err != nil {
+				log.Print(err)
 				break
 			}
-			fmt.Printf("[%s] %s\n", uid, string(msg))
+			fmt.Printf("[%s => %s] %s\n", sender, client.UId(), string(msg))
 		}
 		sig <- syscall.SIGQUIT
 	}(m)
 
-	go func() {
-		err := <- fail
-		fmt.Printf("[%s] protocol error: %s\n", uid, err)
-		sig <- syscall.SIGQUIT
-	}()
-
 	<- sig
-	channel.Update(nil)	// remove self
 	channel.Close()
 }
 
-func add(channel *protocol.GroupChannel, members []string) {
+func add(gid string, members []string, dsAddr string, client *protocol.Protocol) {
+	channel := startChannel(client, dsAddr, gid)
 	if err := channel.AddMembers(members); err != nil {
 		log.Fatal(err)
 	}
 	// poll the status to check if it has finished
 	for retry := 3; retry > 0; retry-- {
 		time.Sleep(time.Second)
+		fmt.Printf("%d...\n", retry)
 		for _, uid := range channel.List() {
 			fmt.Printf("%s\n", uid)
 		}
 	}
+	channel.Close()
 }
 
 func readIdentityKey(path string) (pub, priv []byte, err error) {

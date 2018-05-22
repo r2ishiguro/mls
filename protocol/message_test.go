@@ -27,14 +27,14 @@ func TestMessage(t *testing.T) {
 	}
 	go func(m *Message) {
 		for {
-			msg, err := m.Receive()
+			msg, uid, err := m.Receive()
 			if err != nil {
 				if err != io.EOF {
 					t.Fatal(err)
 				}
 				break
 			}
-			fmt.Printf("%s\n", string(msg))
+			fmt.Printf("%s: %s\n", uid, string(msg))
 			if !bytes.Equal(msg, []byte(testMessage)) {
 				t.Fatalf("mismatch %s vs %s", string(msg), testMessage)
 			}

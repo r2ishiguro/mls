@@ -131,6 +131,9 @@ func (d *DirectoryService) LookupUser(uid string) (*mls.UserInitKey, error) {
 	if err != nil {
 		return nil, err
 	}
+	if res == nil || len(res) == 0 {
+		return nil, nil
+	}
 	return packet.ReadUIK(bytes.NewReader(res))
 }
 
@@ -138,6 +141,9 @@ func (d *DirectoryService) LookupGroup(gid string) (*mls.GroupInitKey, error) {
 	res, err := d.lookup(gid, directoryDataTypeGroup)
 	if err != nil {
 		return nil, err
+	}
+	if res == nil || len(res) == 0 {
+		return nil, nil
 	}
 	return packet.ReadGIK(bytes.NewReader(res))
 }

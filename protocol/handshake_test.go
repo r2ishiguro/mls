@@ -39,10 +39,10 @@ var (
 
 func TestHandshake(t *testing.T) {
 	server, _, err := testHandshake()
-	server.Close()
 	if err != nil {
 		t.Fatal(err)
 	}
+	server.Close()
 }
 
 func testHandshake() (*ds.Server, *GroupChannel, error) {
@@ -94,14 +94,14 @@ func testHandshake() (*ds.Server, *GroupChannel, error) {
 
 	// wait for all clients to receive the request
 	keys := make(map[string][]byte)
-	lastClient := peers[len(peers) - 1]
+	lastClient := len(peers)	// len(peers) + 1
 	for retry := 5; retry > 0 && len(keys) < len(clients); retry-- {	// including self
 		for _, c := range clients {
 			if _, ok := keys[c.self]; ok {
 				continue
 			}
 			if channel, ok := c.channels[gid]; ok {
-				if _, ok := channel.uids[lastClient]; ok {
+				if _, ok := channel.peers[lastClient]; ok {
 					keys[c.self] = channel.state.MessageKey()
 					fmt.Printf("[%s] got a key\n", c.self)
 				}
