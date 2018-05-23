@@ -41,44 +41,41 @@ func NewGroupState(gid string, sig *mls.Signature) *GroupState {
 	}
 }
 
-func (g *GroupState) Initialize(cipher mls.CipherSuite, privKey []byte, identityKey []byte) (int, error) {
+func (g *GroupState) Initialize(cipher mls.CipherSuite) error {
 	g.mutex.Lock()
 	defer g.mutex.Unlock()
 
 	if err := g.initialize(cipher); err != nil {
-		return -1, err
+		return err
 	}
 	g.ratchetTree = art.New(g.dh, nil, 0)
 	g.merkleTree = merkle.New(g.hash, nil, 0)
 	g.epoch = 0
-
-	// add the self node
-	idx := g.ratchetTree.Add(g.dh.Decode(privKey))
-	if idx < 0 {
-		return -1, mls.ErrRatchetTree
-	}
-	if g.merkleTree.Add(identityKey) != idx {
-		return -1, mls.ErrRatchetTree
-	}
-	g.self = idx
-	g.privKey = privKey
-	return idx, nil
 }
 
-func (g *GroupState) InitializeWithGIK(gik *mls.GroupInitKey, privKey []byte, identityKey []byte) (int, error) {
+func (g *GroupState) InitializeWithGIK(gik *mls.GroupInitKey) error {
 	g.mutex.Lock()
 	defer g.mutex.Unlock()
 
 	if err := g.initialize(gik.Cipher); err != nil {
-		return -1, err
+		return err
 	}
 	g.ratchetTree = art.New(g.dh, gik.RatchetFrontier, int(gik.GroupSize))
 	g.merkleTree = merkle.New(g.hash, gik.MerkleFrontier, int(gik.GroupSize))
 	g.epoch = gik.Epoch
+	return nil
+}
 
+func (g *GroupState) AddSelf(privKey []byte, identityKey []byte, addKey []byte) (int error) {
 	// add the self node
-	sukPub := g.dh.Unmarshal(gik.AddKey)
-	idx := g.ratchetTree.Add(g.dh.Injection(g.dh.DH(sukPub, g.dh.Decode(privKey))))
+	var e crypto.GroupExponent
+	if addKey != nil {
+		sukPub := g.dh.Unmarshal(addKey)
+		e = g.dh.Injection(g.dh.DH(sukPub, g.dh.Decode(privKey)))
+	} else {
+		e = g.dh.Decode(privKey)
+	}
+	idx := g.ratchetTree.Add(e)
 	if idx < 0 {
 		return -1, mls.ErrRatchetTree
 	}
@@ -176,10 +173,10 @@ func (g *GroupState) UpdateSelf(privKeys [][]byte) error {
 	return nil
 }
 
-func (g *GroupState) UpdatePath(path [][]byte) error {
+func (g *GroupState) UpdatePath(idx int, path [][]byte) error {
 	g.mutex.Lock()
 	defer g.mutex.Unlock()
-	if !g.ratchetTree.UpdatePath(g.self, path, g.self, g.privKey) {
+	if !g.ratchetTree.UpdatePath(idx, path, g.self, g.privKey) {
 		return mls.ErrRatchetTree
 	}
 	return nil
@@ -201,9 +198,9 @@ func (g *GroupState) DeleteUser(idx int) error {
 	return nil
 }
 
-func (g *GroupState) DeletePath(path [][]byte) error {
+func (g *GroupState) DeletePath(idx int, path [][]byte) error {
 	// same as Update??
-	return g.UpdatePath(path)
+	return g.UpdatePath(idx, path)
 }
 
 func (g *GroupState) Copy() (*GroupState, error) {
@@ -243,14 +240,14 @@ func (g *GroupState) VerifyProof(value []byte, proof [][]byte, idx int) bool {
 	return g.merkleTree.Verify(value, proof, idx)
 }
 
-func (g *GroupState) Proof() (int, [][]byte) {
+func (g *GroupState) Proof() (int, [][]byte, error) {
 	g.mutex.Lock()
 	defer g.mutex.Unlock()
 	proof, ok := g.merkleTree.Proof(g.self)
 	if !ok {
-		return -1, nil
+		return -1, nil, mls.ErrMerkleTree
 	}
-	return g.self, proof
+	return g.self, proof, nil
 }
 
 func (g *GroupState) Epoch() uint32 {

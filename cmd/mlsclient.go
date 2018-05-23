@@ -10,6 +10,7 @@ import (
 	"syscall"
 	"bufio"
 	"time"
+	"io"
 	"io/ioutil"
 	"log"
 	"fmt"
@@ -124,9 +125,6 @@ func startChannel(client *protocol.Protocol, addr string, gid string) *protocol.
 	if err == protocol.ErrGroupNotFound {
 		// the group doesn't exist, then create the new one
 		channel, err = client.NewGroupChannelWithGID(gid, mls.CipherP256R1WithSHA256)
-		if err == nil {
-			err = channel.AddMembers([]string{client.UId()})
-		}
 	}
 	if err != nil {
 		log.Fatalf("joining error: %s", err)
@@ -149,7 +147,9 @@ func echo(gid string, dsAddr string, msgAddr string, client *protocol.Protocol) 
 		for {
 			text, err := r.ReadString('\n')
 			if err != nil {
-				log.Print(err)
+				if err != io.EOF {
+					log.Print(err)
+				}
 				break
 			}
 			m.Send([]byte(text))
@@ -161,7 +161,9 @@ func echo(gid string, dsAddr string, msgAddr string, client *protocol.Protocol) 
 		for {
 			msg, sender, err := m.Receive()
 			if err != nil {
-				log.Print(err)
+				if err != io.EOF {
+					log.Print(err)
+				}
 				break
 			}
 			fmt.Printf("[%s => %s] %s\n", sender, client.UId(), string(msg))

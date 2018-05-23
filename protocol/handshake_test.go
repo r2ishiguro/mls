@@ -38,21 +38,19 @@ var (
 )
 
 func TestHandshake(t *testing.T) {
-	server, _, err := testHandshake()
-	if err != nil {
+	server := ds.NewServer(deliveryAddress, directoryAddress, messageAddress, channelPorts, simplekv.New())
+	defer server.Close()
+	// start the servers
+	if err := server.Start(); err != nil {
 		t.Fatal(err)
 	}
-	server.Close()
+	time.Sleep(time.Second)
+	if _, err := testHandshake(); err != nil {
+		t.Fatal(err)
+	}
 }
 
-func testHandshake() (*ds.Server, *GroupChannel, error) {
-	// start the servers
-	server := ds.NewServer(deliveryAddress, directoryAddress, messageAddress, channelPorts, simplekv.New())
-	if err := server.Start(); err != nil {
-		return nil, nil, err
-	}
-	time.Sleep(time.Second)
-
+func testHandshake() (map[string]*Protocol, error) {
 	clients := make(map[string]*Protocol)
 	// register and run self and all peers
 	for _, user := range append([]string{me}, peers...) {
@@ -60,18 +58,18 @@ func testHandshake() (*ds.Server, *GroupChannel, error) {
 		auth := NewDummAuth(user)
 		sig, err := mls.NewSignature(mls.SignatureECDSA)
 		if err != nil {
-			return nil, nil, err
+			return nil, err
 		}
 		pub, priv, err := sig.Generate()
 		if err != nil {
-			return nil, nil, err
+			return nil, err
 		}
 		sig.Initialize(pub, priv)
 		auth.Register(pub, user)
 		dir := ds.NewDirectoryService(directoryAddress)
 		clients[user] = New(user, dir, sig, auth, aesgcm.NewAESGCM())
 		if err := clients[user].Connect(deliveryAddress); err != nil {
-			return nil, nil, err
+			return nil, err
 		}
 		go func(client *Protocol) {
 			err := client.Run()
@@ -83,18 +81,17 @@ func testHandshake() (*ds.Server, *GroupChannel, error) {
 		}(clients[user])
 	}
 
-	self := clients[me]
-	channel, err := self.NewGroupChannelWithGID(gid, mls.CipherP256R1WithSHA256)
+	channel, err := clients[me].NewGroupChannelWithGID(gid, mls.CipherP256R1WithSHA256)
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
 	if err := channel.AddMembers(peers); err != nil {
-		return nil, nil, err
+		return nil, err
 	}
 
-	// wait for all clients to receive the request
+	// wait for all clients to receive the message
 	keys := make(map[string][]byte)
-	lastClient := len(peers)	// len(peers) + 1
+	lastClient := peers[len(peers)-1]
 	for retry := 5; retry > 0 && len(keys) < len(clients); retry-- {	// including self
 		for _, c := range clients {
 			if _, ok := keys[c.self]; ok {
@@ -112,14 +109,14 @@ func testHandshake() (*ds.Server, *GroupChannel, error) {
 
 	// all clients should have the same tree -- checking the message key should be enough
 	if len(keys) < len(clients) {
-		return nil, nil, fmt.Errorf("some clients couldn't receive the message")
+		return nil, fmt.Errorf("some clients couldn't receive the message")
 	}
 	for user, k := range keys {
 		if !bytes.Equal(keys[me], k) {
-			return nil, nil, fmt.Errorf("%s: message key mismatch", user)
+			return nil, fmt.Errorf("%s: message key mismatch", user)
 		}
 	}
-	return server, channel, nil
+	return clients, nil
 }
 
 func TestAddMembers(t *testing.T) {

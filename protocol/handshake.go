@@ -21,10 +21,10 @@ var (
 	ErrUserNotFound = errors.New("user not found")
 	ErrGroupNotFound = errors.New("group not found")
 	ErrAuthFailure = errors.New("authentication failed")
-	ErrVerificationFailure = errors.New("verification failed")
+	ErrMerkleProofVerificationFailure = errors.New("Merkle proof verification failed")
 	ErrInconsistentPath = errors.New("inconsistent path")
 	ErrUnknownHandshakeProtocol = errors.New("unknown protocol")
-	ErrMerkleProof = errors.New("something wrong with the merkle tree")
+	ErrEpochOutOfSync = errors.New("epoch out of sync")
 )
 
 type Protocol struct {
@@ -39,16 +39,11 @@ type Protocol struct {
 	self string
 }
 
-type Peer struct {
-	uid string
-	identityKey []byte
-}
-
 type GroupChannel struct {
 	gid string
 	state *GroupState
 	dh crypto.GroupOperation	// corresponding to the cipher suite
-	peers map[int]*Peer		// map of the leaf index to UID and IdentityKey
+	peers map[string]int		// map of UID to the leaf index
 	message *Message
 	protocol *Protocol
 	epoch int
@@ -92,7 +87,16 @@ func (p *Protocol) Run() error {
 
 // create a new GroupChannel and initialize it with the self key
 func (p *Protocol) NewGroupChannelWithGID(gid string, cipher mls.CipherSuite) (*GroupChannel, error) {
-	return p.newGroupChannel(gid, cipher, nil, p.uik)
+	channel, err := p.newGroupChannel(gid, cipher, nil, p.uik)
+	if err != nil {
+		return nil, err
+	}
+	gik, err := channel.state.ConstructGroupInitKey()
+	if err != nil {
+		return nil, err
+	}
+	p.directory.RegisterGIK(gik.GroupId, gik)
+	return channel, err
 }
 
 // create a new GroupChannel with a given GroupInitKey
@@ -110,16 +114,22 @@ func (p *Protocol) newGroupChannel(gid string, cipher mls.CipherSuite, gik *mls.
 	channel.state = NewGroupState(gid, p.sig)
 	var idx int
 	var err error
+	var addKey []byte
 	if gik != nil {
-		idx, err = channel.state.InitializeWithGIK(gik, privKey, uik.IdentityKey)
+		err = channel.state.InitializeWithGIK(gik)
+		addKey = gik.AddKey
 	} else {
-		idx, err = channel.state.Initialize(cipher, privKey, uik.IdentityKey /* should be the same as p.sig.PublicKey() */)
+		err = channel.state.Initialize(cipher)
 	}
 	if err != nil {
 		return nil, err
 	}
-	channel.peers = make(map[int]*Peer)
-	channel.peers[idx] = &Peer{p.self, p.sig.PublicKey()}
+	idx, err := channel.state.AddSelf(privKey, uik.IdentityKey, AddKey)
+	if err != nil {
+		return nil, err
+	}
+	channel.peers = make(map[string]int)
+	channel.peers[p.self] = idx
 	p.channels[gid] = channel
 	return channel, nil
 }
@@ -193,14 +203,8 @@ func (c *GroupChannel) Update(privKeys [][]byte) error {
 
 func (c *GroupChannel) Delete(member string) error {
 	// lookup the leaf index from the UID
-	idx := -1
-	for i, peer := range c.peers {
-		if member == peer.uid {
-			idx = i
-			break
-		}
-	}
-	if idx < 0 {
+	idx, ok := c.peers[member]
+	if !ok {
 		return ErrUserNotFound
 	}
 	ng, err := c.state.Copy()
@@ -223,8 +227,8 @@ func (c *GroupChannel) Delete(member string) error {
 
 func (c *GroupChannel) List() []string {
 	var res []string
-	for _, peer := range c.peers {
-		res = append(res, peer.uid)
+	for uid, _ := range c.peers {
+		res = append(res, uid)
 	}
 	return res
 }
@@ -306,13 +310,8 @@ func (p *Protocol) handler(msg *packet.HandshakeMessage, pkt []byte) error {
 	}
 	if channel != nil {	// if a group channel doesn't exist the message will be simply ignored or will cause an error so no need to verify
 		if channel.epoch != 0 && int(msg.PriorEpoch) != channel.epoch + 1 {
-			return ErrVerificationFailure
+			return ErrEpochOutOfSync
 		}
-		// the signature of HandshakeMessage has been verified already
-		if !bytes.Equal(msg.IdentityKey, p.sig.PublicKey()) && !channel.state.VerifyProof(msg.IdentityKey, msg.MerkleProof, int(msg.SignerIndex)) {
-			return ErrVerificationFailure
-		}
-		channel.epoch = int(msg.PriorEpoch)
 	}
 
 	init := false
@@ -342,11 +341,18 @@ func (p *Protocol) handler(msg *packet.HandshakeMessage, pkt []byte) error {
 			if err != nil {
 				return err
 			}
-			idx, err := channel.state.AddPath(addPath, msg.IdentityKey)
+			// verify the Merkle proof against a temporary updated copy
+			ng, err := channel.state.Copy()
+			idx, err := ng.AddPath(addPath, msg.IdentityKey)
 			if err != nil {
 				return err
 			}
-			channel.peers[idx] = &Peer{uid, msg.IdentityKey}
+			if err := verifyProof(ng, msg); err != nil {
+				return err
+			}
+			// now update the state
+			channel.state.AddPath(addPath, msg.IdentityKey)
+			channel.peers[uid] = idx
 		}
 		init = true
 	case packet.HandshakeGroupAdd:
@@ -362,11 +368,17 @@ func (p *Protocol) handler(msg *packet.HandshakeMessage, pkt []byte) error {
 				// since there's no protocol to delete groups take this to create a new group with the same group ID
 				log.Printf("handshake: [%s] %d has added me again to an existing group... ignore it", p.self, msg.SignerIndex)
 			} else {
+				g := NewGroupState(msg.GIK.GroupId, p.sig)
+				if err := g.InitializeWithGIK(msg.GIK); err != nil {
+					return err
+				}
+				if err := verifyProof(g, msg); err != nil {
+					return err
+				}
 				channel, err = p.NewGroupChannelWithGIK(msg.GIK, uik)
 				if err != nil {
 					return err
 				}
-				channel.epoch = int(msg.PriorEpoch)
 			}
 
 			// should renew the UIK and register it to the directory service
@@ -378,19 +390,25 @@ func (p *Protocol) handler(msg *packet.HandshakeMessage, pkt []byte) error {
 				// not my group or not yet received the GroupAdd to itself above
 				return nil	// just ignore
 			}
+			if err := verifyProof(channel.state, msg); err != nil {
+				return err
+			}
 			idx, err := channel.state.AddUser(uik)
 			if err != nil {
 				return err
 			}
-			channel.peers[idx] = &Peer{uid, uik.IdentityKey}
+			channel.peers[uid] = idx
 		}
 		init = true
 	case packet.HandshakeUpdate:
 		if channel == nil {
 			return ErrGroupNotFound
 		}
+		if err := verifyProof(channel.state, msg); err != nil {
+			return ErrMerkleProofVerificationFailure
+		}
 		path := msg.Data.(*packet.Update).Path
-		channel.state.UpdatePath(path)
+		channel.state.UpdatePath(int(msg.SignerIndex), path)
 	case packet.HandshakeDelete:
 		if channel == nil {
 			if bytes.Equal(msg.IdentityKey, p.sig.PublicKey()) {
@@ -398,15 +416,14 @@ func (p *Protocol) handler(msg *packet.HandshakeMessage, pkt []byte) error {
 			}
 			return ErrGroupNotFound
 		}
-		del := msg.Data.(*packet.Delete)
-		peer, ok := channel.peers[int(del.Index)]
-		if !ok {
-			return ErrUserNotFound
+		if err := verifyProof(channel.state, msg); err != nil {
+			return err
 		}
-		if peer.uid == p.self {
+		del := msg.Data.(*packet.Delete)
+		if int(del.Index) == channel.peers[p.self] {
 			channel.Close()		// delete me
 		} else {
-			channel.state.DeletePath(del.Path)
+			channel.state.DeletePath(int(del.Index), del.Path)
 		}
 	default:
 		return ErrUnknownHandshakeProtocol
@@ -422,11 +439,14 @@ func (p *Protocol) handler(msg *packet.HandshakeMessage, pkt []byte) error {
 		}
 		p.directory.RegisterGIK(gik.GroupId, gik)
 	}
+	channel.epoch = int(msg.PriorEpoch)
 	return nil
 }
 
-func (c *GroupChannel) verifyHandshakeMessage(msg *packet.HandshakeMessage, pkt []byte) error {
-	// first check the merkle proof
+func verifyProof(g *GroupState, msg *packet.HandshakeMessage) error {
+	if !g.VerifyProof(msg.IdentityKey, msg.MerkleProof, int(msg.SignerIndex)) {
+		return ErrMerkleProofVerificationFailure
+	}
 	return nil
 }
 
@@ -493,9 +513,9 @@ func (c *GroupChannel) marshal(g *GroupState, data interface{}) ([]byte, error) 
 	}
 	msg.GIK = gik
 
-	idx, proof := g.Proof()
-	if idx < 0 {
-		return nil, ErrMerkleProof
+	idx, proof, err := g.Proof()
+	if err != nil {
+		return nil, err
 	}
 
 	msg.SignerIndex = uint32(idx)

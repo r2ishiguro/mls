@@ -9,6 +9,9 @@ import (
 	"time"
 	"io"
 	"fmt"
+
+	"github.com/r2ishiguro/mls/ds"
+	"github.com/r2ishiguro/mls/ds/keystore/simplekv"
 )
 
 const (
@@ -16,33 +19,53 @@ const (
 )
 
 func TestMessage(t *testing.T) {
-	server, channel, err := testHandshake()
-	if err != nil {
-		t.Fatal(err)
-	}
+	server := ds.NewServer(deliveryAddress, directoryAddress, messageAddress, channelPorts, simplekv.New())
 	defer server.Close()
-	m, err := channel.NewMessage(messageAddress)
+	// start the servers
+	if err := server.Start(); err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(time.Second)
+	clients, err := testHandshake()
 	if err != nil {
 		t.Fatal(err)
 	}
-	go func(m *Message) {
-		for {
-			msg, uid, err := m.Receive()
-			if err != nil {
-				if err != io.EOF {
-					t.Fatal(err)
-				}
-				break
-			}
-			fmt.Printf("%s: %s\n", uid, string(msg))
-			if !bytes.Equal(msg, []byte(testMessage)) {
-				t.Fatalf("mismatch %s vs %s", string(msg), testMessage)
-			}
+
+	var messages []*Message
+	for _, client := range clients {
+		channel := client.channels[gid]
+		m, err := channel.NewMessage(messageAddress)
+		if err != nil {
+			t.Fatal(err)
 		}
-	}(m)
-	if err := m.Send([]byte(testMessage)); err != nil {
-		t.Fatal(err)
+		go func(p *Protocol, m *Message) {
+			for {
+				msg, uid, err := m.Receive()
+				if err != nil {
+					if err != io.EOF {
+						t.Fatal(err)
+				}
+					break
+				}
+				fmt.Printf("[%s => %s]: %s\n", uid, p.self, string(msg))
+				if !bytes.Equal(msg, []byte(testMessage)) {
+					t.Fatalf("mismatch %s vs %s", string(msg), testMessage)
+				}
+			}
+		}(client, m)
+		messages = append(messages, m)
 	}
+
+	for _, m := range messages {
+		go func(m *Message) {
+			if err := m.Send([]byte(testMessage)); err != nil {
+				t.Fatal(err)
+			}
+		}(m)
+	}
+	
 	time.Sleep(1 * time.Second)
-	m.Close()
+	for _, m := range messages {
+		m.Close()
+	}
 }

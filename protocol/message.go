@@ -7,19 +7,20 @@ import (
 	"io"
 	"crypto/rand"
 	"encoding/binary"
-	"errors"
-	"fmt"
 
 	"github.com/r2ishiguro/mls"
 	"github.com/r2ishiguro/mls/ds"
 	"github.com/r2ishiguro/mls/crypto"
+	"github.com/r2ishiguro/mls/auth"
 )
 
-var (
-	ErrUnauthorizedSender = errors.New("unauthorized sender")
+const (
+	FrameSize = 16*1024	// same as TLS
 )
 
 type Message struct {
+	keymap map[string]string
+	auth auth.AuthenticationService
 	svc *ds.MessageService
 	channel *GroupChannel
 }
@@ -30,6 +31,8 @@ func (c *GroupChannel) NewMessage(msgAddr string) (*Message, error) {
 		return nil, err
 	}
 	msg := &Message{
+		keymap: make(map[string]string),
+		auth: c.protocol.auth,
 		svc: svc,
 		channel: c,
 	}
@@ -48,7 +51,7 @@ func (m *Message) Close() {
 
 ciphertext format:
 
-     |  ciphertext | tag | epoch | nonce | signer idx | signature | algo |
+     |  ciphertext | tag | epoch | nonce | id-key | signature | algo |
      |        AEAD       |
      |             |     TBS     |
 
@@ -64,32 +67,38 @@ func (m *Message) Send(msg []byte) error {
 		return err
 	}
 
-	nonce := make([]byte, aead.NonceSize())
-	if _, err := io.ReadFull(rand.Reader, nonce); err != nil {
-		return err
+	for len(msg) > 0 {
+		nonce := make([]byte, aead.NonceSize())
+		if _, err := io.ReadFull(rand.Reader, nonce); err != nil {
+			return err
+		}
+		n := len(msg)
+		if n > FrameSize {
+			n = FrameSize
+		}
+		ciphertext := aead.Seal(nil, nonce, msg[:n], nil)
+		msg = msg[n:]
+		tagpos := len(ciphertext) - aead.Overhead()
+
+		// append epoch
+		var ebuf [4]byte
+		binary.BigEndian.PutUint32(ebuf[:], m.channel.state.Epoch())
+		ciphertext = append(ciphertext, ebuf[:]...)
+
+		// calculate the signature over the tag + epoch
+		signature, err := sig.Sign(ciphertext[tagpos:])
+		if err != nil {
+			return err
+		}
+
+		// append nonce and (algo, pubkey, signature)
+		ciphertext = append(ciphertext, append(nonce, append(sig.PublicKey(), append(signature, byte(sig.Algorithm()))...)...)...)
+
+		if err := m.svc.Send(ciphertext); err != nil {
+			return err
+		}
 	}
-	ciphertext := aead.Seal(nil, nonce, msg, nil)
-	tagpos := len(ciphertext) - aead.Overhead()
-
-	// append epoch
-	var ebuf [4]byte
-	binary.BigEndian.PutUint32(ebuf[:], m.channel.state.Epoch())
-	ciphertext = append(ciphertext, ebuf[:]...)
-
-	// calculate the signature over the tag + epoch
-	signature, err := sig.Sign(ciphertext[tagpos:])
-	if err != nil {
-		return err
-	}
-
-	// append nonce and (algo, pubkey, signature)
-	var signerIndex [4]byte
-	idx, _ := m.channel.state.Proof()	// we don't need the Merkle proof right??
-	fmt.Printf("message: sender = %d\n", idx)
-	binary.BigEndian.PutUint32(signerIndex[:], uint32(idx))
-	ciphertext = append(ciphertext, append(nonce, append(signerIndex[:], append(signature, byte(sig.Algorithm()))...)...)...)
-
-	return m.svc.Send(ciphertext)
+	return nil
 }
 
 func (m *Message) Receive() ([]byte, string, error) {
@@ -109,39 +118,38 @@ func (m *Message) Receive() ([]byte, string, error) {
 	if err != nil {
 		return nil, "", err
 	}
+	keysize, _ := sig.KeySize()
 
 	// calculate the position of each component
 	sigpos := algopos - sig.Size()
-	idxpos := sigpos - 4
-	noncepos := idxpos - aead.NonceSize()
+	keypos := sigpos - keysize
+	noncepos := keypos - aead.NonceSize()
 	epochpos := noncepos - 4	// sizeof uint32
 	tagpos := epochpos - aead.Overhead()
 	signature := ciphertext[sigpos:algopos]
-	idx := ciphertext[idxpos:sigpos]
-	nonce := ciphertext[noncepos:idxpos]
+	key := ciphertext[keypos:sigpos]
+	nonce := ciphertext[noncepos:keypos]
 	epoch := binary.BigEndian.Uint32(ciphertext[epochpos:noncepos])
 	if epoch != m.channel.state.Epoch() {
-		fmt.Printf("message: key generation mismatch: %d vs %d\n", epoch, m.channel.state.Epoch())
 		return nil, "", crypto.ErrKeyGenerationMismatch
 	}
 	tag := ciphertext[tagpos:noncepos]	// including epoch
 
 	// verify the signature
-	signerIdx := binary.BigEndian.Uint32(idx)
-	peer, ok := m.channel.peers[int(signerIdx)]
+	uid, ok := m.keymap[string(key)]
 	if !ok {
-		return nil, "", ErrUnauthorizedSender
+		uid, err = m.auth.Lookup(key)
+		if err != nil {
+			return nil, "", err
+		}
+		m.keymap[string(key)] = uid
 	}
-	sig.Initialize(peer.identityKey, nil)
+	sig.Initialize(key, nil)
 	if err := sig.Verify(tag, signature); err != nil {
-		fmt.Printf("message: verify failed: %s (%d)\n", peer.uid, signerIdx)
 		return nil, "", err
 	}
 
 	// finally, we can decrypt...
 	plain, err := aead.Open(nil, nonce, ciphertext[:epochpos], nil)
-	if err != nil {
-		return nil, "", err
-	}
-	return plain, peer.uid, nil
+	return plain, uid, err
 }

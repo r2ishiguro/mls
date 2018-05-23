@@ -87,9 +87,9 @@ func TestGroupState(t *testing.T) {
 		fmt.Printf("[%d] %x (%d)\n", level, ng.dh.Marshal(value.(crypto.GroupExponent)), size)
 	})
 	path := ng.GetPath(idx)
-	idx, proof := ng.Proof()
-	if idx < 0 {
-		t.Fatalf("couldn't get a proof")
+	idx, proof, err := ng.Proof()
+	if err != nil {
+		t.Fatal(err)
 	}
 
 	fmt.Printf("path:\n")

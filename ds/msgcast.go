@@ -7,6 +7,8 @@ import (
 	"net"
 	"io"
 	"sync"
+	"bufio"
+	"encoding/binary"
 	"errors"
 	"fmt"
 	"log"
@@ -23,6 +25,7 @@ var (
 //
 type MessageService struct {
 	conn net.Conn
+	rw *bufio.ReadWriter
 }
 
 func NewMessageService(msgAddr string, gid string) (*MessageService, error) {
@@ -49,22 +52,41 @@ func NewMessageService(msgAddr string, gid string) (*MessageService, error) {
 	}
 	return &MessageService{
 		conn: chConn,
+		rw: bufio.NewReadWriter(bufio.NewReader(chConn), bufio.NewWriter(chConn)),
 	}, nil
 }
 
 func (m *MessageService) Send(data []byte) error {
-	n, err := m.conn.Write(data)
-	if err != nil {
+	w := m.rw.Writer
+	if err := binary.Write(w, binary.BigEndian, uint32(len(data))); err != nil {
 		return err
 	}
-	if n != len(data) {
-		return ErrInsufficient
+	if _, err := w.Write(data); err != nil {
+		return err
+	}
+	if err := w.Flush(); err != nil {
+		return err
 	}
 	return nil
 }
 
 func (m *MessageService) Receive() ([]byte, error) {
-	return readUp(m.conn)
+	r := m.rw.Reader
+	var n uint32
+	if err := binary.Read(r, binary.BigEndian, &n); err != nil {
+		if isEOF(err) {
+			err = io.EOF
+		}
+		return nil, err
+	}
+	buf := make([]byte, n)
+	if _, err := io.ReadFull(r, buf); err != nil {
+		if isEOF(err) {
+			err = io.EOF
+		}
+		return nil, err
+	}
+	return buf, nil
 }
 
 func (m *MessageService) Close() {
