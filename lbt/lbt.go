@@ -101,6 +101,9 @@ func updateNode(root *node, leaf int, path []interface{}) {
 }
 
 func (lbt *LeftBalancedTree) Size() int {
+	if lbt.root == nil {
+		return 0
+	}
 	return lbt.root.size
 }
 

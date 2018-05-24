@@ -65,12 +65,18 @@ func (mt *MerkleTree) Proof(idx int) ([][]byte, bool) {
 	if !ok {
 		return nil, ok
 	}
-	res := make([][]byte, len(copath))
+	res := make([][]byte, len(copath) + 1)
+	v := mt.tree.Leaf(idx)
+	if v == nil {
+		res[0] = nil
+	} else {
+		res[0] = v.([]byte)
+	}
 	for i, v := range copath {
 		if v == nil {
-			res[i] = nil
+			res[i+1] = nil
 		} else {
-			res[i] = v.([]byte)
+			res[i+1] = v.([]byte)
 		}
 	}
 	return res, true
@@ -80,21 +86,24 @@ func (mt *MerkleTree) Copy() *MerkleTree {
 	return &MerkleTree{
 		tree: mt.tree.Copy(),
 		h: mt.h,
-		rootHash: nil,
+		rootHash: mt.rootHash,
 	}
 }
 
 func (mt *MerkleTree) Verify(value []byte, proof [][]byte, idx int) bool {
-	val, _ := calculate(idx, value, proof, mt.Size(), mt.h())
-	return bytes.Equal(val, mt.rootHash)
+	if len(proof) == 0 {
+		return false
+	}
+	val, path := calculate(idx, value, proof[1:], mt.Size(), mt.h())
+	return bytes.Equal(val, mt.rootHash) && bytes.Equal(path[0].([]byte), proof[0])
 }
 
 func (mt *MerkleTree) Calculate(idx int, leaf []byte) ([]byte, []interface{}) {
-	copath, ok := mt.Proof(idx)
-	if !ok {
+	proof, ok := mt.Proof(idx)	// want copath
+	if !ok || len(proof) == 0 {
 		return nil, nil
 	}
-	return calculate(idx, leaf, copath, mt.Size(), mt.h())
+	return calculate(idx, leaf, proof[1:], mt.Size(), mt.h())
 }
 
 func calculate(idx int, leaf []byte, copath [][]byte, size int, f hash.Hash) ([]byte, []interface{}) {

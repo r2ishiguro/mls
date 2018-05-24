@@ -128,7 +128,7 @@ func TestAddMembers(t *testing.T) {
 	defer server.Close()
 	time.Sleep(time.Second)
 
-	clients := make(map[string]*Protocol)
+	var clients []*Protocol
 	// register and run self and all peers
 	for _, user := range append([]string{me}, peers...) {
 		// generate an identityKey and register it with the uid
@@ -153,11 +153,10 @@ func TestAddMembers(t *testing.T) {
 		}
 		p.uik = uik
 		p.privKeyMap[string(uik.InitKeys[uik.Ciphers[0]])] = privKeys
-		clients[user] = p
+		clients = append(clients, p)
 	}
 
-	self := clients[me]
-	channel, err := self.NewGroupChannelWithGID(gid, mls.CipherP256R1WithSHA256)
+	channel, err := clients[0].NewGroupChannelWithGID(gid, mls.CipherP256R1WithSHA256)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -166,10 +165,10 @@ func TestAddMembers(t *testing.T) {
 	}
 }
 
-func addMembers(c *GroupChannel, clients map[string]*Protocol) error {
+func addMembers(c *GroupChannel, clients []*Protocol) error {
 	p := c.protocol
 	g := c.state
-	for _, client := range clients {
+	for _, client := range clients[1:] {
 		uid, err := p.verifyUIK(client.uik)
 		if err != nil {
 			return err
@@ -188,18 +187,20 @@ func addMembers(c *GroupChannel, clients map[string]*Protocol) error {
 		if err != nil {
 			return err
 		}
-		// immitate that each client receives the packet
+		// imitate that each client receives the packet
 		if err := ng.KeyScheduling(true, pkt); err != nil {
 			return err
 		}
-		// immitate broadcast via DS
+		// imitate broadcast via DS
 		msg, _, err := packet.UnmarshalHandshake(bytes.NewReader(pkt))
 		if err != nil {
 			return err
 		}
 		for _, peer := range clients {
+			fmt.Printf("adding %s to %s...\n", client.self, peer.self)
 			if err := peer.handler(msg, pkt); err != nil {
-				return err
+				// return err
+				fmt.Printf("  %s\n", err)
 			}
 		}
 		g = ng

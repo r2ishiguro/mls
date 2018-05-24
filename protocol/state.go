@@ -23,7 +23,8 @@ type GroupState struct {
 	ratchetTree *art.RatchetTree	// keep the shape of two trees the same
 	merkleTree *merkle.MerkleTree
 	epoch uint32
-	suk crypto.GroupExponent			// add key (private)
+	suk crypto.GroupExponent	// add key (private)
+	sukPub crypto.GroupElement	// add key (public)
 	messageSecret []byte		// message master secret
 	initSecret []byte
 	self int			// the leaf index
@@ -34,44 +35,59 @@ type GroupState struct {
 	hash func() hash.Hash
 }
 
-func NewGroupState(gid string, sig *mls.Signature) *GroupState {
-	return &GroupState{
+func NewGroupState(gid string, cipher mls.CipherSuite, sig *mls.Signature) (*GroupState, error) {
+	dh, err := mls.NewDH(cipher)
+	if err != nil {
+		return nil, err
+	}
+	hash, err := mls.NewHash(cipher)
+	if err != nil {
+		return nil, err
+	}
+	_, suk, err := dh.GenerateKey()
+	if err != nil {
+		return nil, err
+	}
+	g := &GroupState{
 		gid: gid,
+		cipherSuite: cipher,
+		dh: dh,
+		hash: hash,
+		initSecret: make([]byte, hash().Size()),
+		messageSecret: make([]byte, hash().Size()),	// the message encryption key size = hash size,
+		suk: suk,
+		sukPub: nil,
 		sig: sig,
 	}
-}
 
-func (g *GroupState) Initialize(cipher mls.CipherSuite) error {
 	g.mutex.Lock()
 	defer g.mutex.Unlock()
-
-	if err := g.initialize(cipher); err != nil {
-		return err
-	}
 	g.ratchetTree = art.New(g.dh, nil, 0)
 	g.merkleTree = merkle.New(g.hash, nil, 0)
 	g.epoch = 0
+	return g, nil
 }
 
-func (g *GroupState) InitializeWithGIK(gik *mls.GroupInitKey) error {
+func NewGroupStateWithGIK(gik *mls.GroupInitKey, sig *mls.Signature) (*GroupState, error) {
+	g, err := NewGroupState(gik.GroupId, gik.Cipher, sig)
+	if err != nil {
+		return nil, err
+	}
+	g.sukPub = g.dh.Unmarshal(gik.AddKey)
+
 	g.mutex.Lock()
 	defer g.mutex.Unlock()
-
-	if err := g.initialize(gik.Cipher); err != nil {
-		return err
-	}
 	g.ratchetTree = art.New(g.dh, gik.RatchetFrontier, int(gik.GroupSize))
 	g.merkleTree = merkle.New(g.hash, gik.MerkleFrontier, int(gik.GroupSize))
 	g.epoch = gik.Epoch
-	return nil
+	return g, nil
 }
 
-func (g *GroupState) AddSelf(privKey []byte, identityKey []byte, addKey []byte) (int error) {
+func (g *GroupState) AddSelf(privKey []byte, identityKey []byte) (int, error) {
 	// add the self node
 	var e crypto.GroupExponent
-	if addKey != nil {
-		sukPub := g.dh.Unmarshal(addKey)
-		e = g.dh.Injection(g.dh.DH(sukPub, g.dh.Decode(privKey)))
+	if g.sukPub != nil {
+		e = g.dh.Injection(g.dh.DH(g.sukPub, g.dh.Decode(privKey)))
 	} else {
 		e = g.dh.Decode(privKey)
 	}
@@ -85,24 +101,6 @@ func (g *GroupState) AddSelf(privKey []byte, identityKey []byte, addKey []byte) 
 	g.self = idx
 	g.privKey = privKey
 	return idx, nil
-}
-
-func (g *GroupState) initialize(cipher mls.CipherSuite) (err error) {
-	dh, err := mls.NewDH(cipher)
-	if err != nil {
-		return err
-	}
-	hash, err := mls.NewHash(cipher)
-	if err != nil {
-		return err
-	}
-	g.cipherSuite = cipher
-	g.dh = dh
-	g.hash = hash
-	g.initSecret = make([]byte, g.hash().Size())
-	g.messageSecret = make([]byte, g.hash().Size())	// the message encryption key size = hash size
-	_, g.suk, err = dh.GenerateKey()
-	return err
 }
 
 func (g *GroupState) ConstructGroupInitKey() (*mls.GroupInitKey, error) {
@@ -204,14 +202,15 @@ func (g *GroupState) DeletePath(idx int, path [][]byte) error {
 }
 
 func (g *GroupState) Copy() (*GroupState, error) {
-	ng := NewGroupState(g.gid, g.sig)
-	if err := ng.initialize(g.cipherSuite); err != nil {
+	ng, err := NewGroupState(g.gid, g.cipherSuite, g.sig)
+	if err != nil {
 		return nil, err
 	}
 	ng.ratchetTree = g.ratchetTree.Copy()
 	ng.merkleTree = g.merkleTree.Copy()
 	ng.epoch = g.epoch
-	ng.suk = g.suk	// copy of the reference
+	ng.suk = g.suk		// copy of the reference
+	ng.sukPub = g.sukPub
 	copy(ng.messageSecret, g.messageSecret)
 	copy(ng.initSecret, g.initSecret)
 	ng.self = g.self

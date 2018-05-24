@@ -36,7 +36,7 @@ func main() {
 	keypathp := flag.String("home", defaultPath, "path to home")
 	dsAddrp := flag.String("ds", defaultDSAddr, "ds server address")
 	dirAddrp := flag.String("dir", defaultDirAddr, "directory service address")
-	msgAddrp := flag.String("msg", defaultMsgAddr, "message servicce address")
+	msgAddrp := flag.String("msg", defaultMsgAddr, "message service address")
 
 	flag.Parse()
 	keypath := *keypathp

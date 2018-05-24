@@ -44,13 +44,16 @@ func TestGroupState(t *testing.T) {
 		t.Fatal(err)
 	}
 	sig.Initialize(pub, priv)
-	g := NewGroupState("test GID", sig)
+	g, err := NewGroupState("test GID", mls.CipherP256R1WithSHA256, sig)
+	if err != nil {
+		t.Fatal(err)
+	}
 	selfUIK, selfKeys, err := generateUIK()
 	if err != nil {
 		t.Fatal(err)
 	}
 	priv = selfKeys[mls.CipherP256R1WithSHA256]
-	if _, err := g.Initialize(mls.CipherP256R1WithSHA256, priv, selfUIK.IdentityKey); err != nil {
+	if _, err := g.AddSelf(priv, selfUIK.IdentityKey); err != nil {
 		t.Fatal(err)
 	}
 	for nusers := 6; nusers > 0; nusers-- {
@@ -73,12 +76,15 @@ func TestGroupState(t *testing.T) {
 		t.Fatal(err)
 	}
 	uik, privKeys, err := generateUIK()
-	ng := NewGroupState("test GID", sig)
+	ng, err := NewGroupStateWithGIK(gik, sig)
+	if err != nil {
+		t.Fatal(err)
+	}
 	fmt.Printf("=== frontier ===\n")
 	for _, f := range gik.RatchetFrontier {
 		fmt.Printf("%x\n", f)
 	}
-	idx, err := ng.InitializeWithGIK(gik, privKeys[gik.Cipher], uik.IdentityKey)
+	idx, err := ng.AddSelf(privKeys[gik.Cipher], uik.IdentityKey)
 	if err != nil {
 		t.Fatal(err)
 	}

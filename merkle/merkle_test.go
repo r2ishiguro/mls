@@ -25,6 +25,10 @@ func TestVerify(t *testing.T) {
 			if !ok {
 				t.Fatalf("failed to get a proof")
 			}
+			fmt.Printf("Proof[%d]\n", j)
+			for k := 0; k < len(proof); k++ {
+				fmt.Printf("  %x\n", proof[k])
+			}
 			if !mt.Verify([]byte{byte(j)}, proof, j) {
 				t.Fatalf("failed to verify: %d:%d", i, j)
 			}
