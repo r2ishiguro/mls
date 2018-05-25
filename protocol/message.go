@@ -11,7 +11,6 @@ import (
 	"github.com/r2ishiguro/mls"
 	"github.com/r2ishiguro/mls/ds"
 	"github.com/r2ishiguro/mls/crypto"
-	"github.com/r2ishiguro/mls/auth"
 )
 
 const (
@@ -20,23 +19,22 @@ const (
 
 type Message struct {
 	keymap map[string]string
-	auth auth.AuthenticationService
 	svc *ds.MessageService
-	channel *GroupChannel
+	p *Protocol
+	g *GroupState
 }
 
-func (c *GroupChannel) NewMessage(msgAddr string) (*Message, error) {
-	svc, err := ds.NewMessageService(msgAddr, c.gid)
+func NewMessage(msgAddr string, gid string, p *Protocol, g *GroupState) (*Message, error) {
+	svc, err := ds.NewMessageService(msgAddr, gid)
 	if err != nil {
 		return nil, err
 	}
 	msg := &Message{
 		keymap: make(map[string]string),
-		auth: c.protocol.auth,
 		svc: svc,
-		channel: c,
+		p: p,
+		g: g,
 	}
-	c.message = msg
 	return msg, nil
 }
 
@@ -60,9 +58,9 @@ put algo at the end of ciphertext so the signature scheme can be constructed wit
 */
 
 func (m *Message) Send(msg []byte) error {
-	sig := m.channel.protocol.sig
+	sig := m.p.sig
 
-	aead, err := m.channel.protocol.aead.NewAEAD(m.channel.state.MessageKey())
+	aead, err := m.p.aead.NewAEAD(m.g.MessageKey())
 	if err != nil {
 		return err
 	}
@@ -82,7 +80,7 @@ func (m *Message) Send(msg []byte) error {
 
 		// append epoch
 		var ebuf [4]byte
-		binary.BigEndian.PutUint32(ebuf[:], m.channel.state.Epoch())
+		binary.BigEndian.PutUint32(ebuf[:], m.g.Epoch())
 		ciphertext = append(ciphertext, ebuf[:]...)
 
 		// calculate the signature over the tag + epoch
@@ -107,7 +105,7 @@ func (m *Message) Receive() ([]byte, string, error) {
 		return nil, "", err
 	}
 
-	aead, err := m.channel.protocol.aead.NewAEAD(m.channel.state.MessageKey())
+	aead, err := m.p.aead.NewAEAD(m.g.MessageKey())
 	if err != nil {
 		return nil, "", err
 	}
@@ -130,7 +128,7 @@ func (m *Message) Receive() ([]byte, string, error) {
 	key := ciphertext[keypos:sigpos]
 	nonce := ciphertext[noncepos:keypos]
 	epoch := binary.BigEndian.Uint32(ciphertext[epochpos:noncepos])
-	if epoch != m.channel.state.Epoch() {
+	if epoch != m.g.Epoch() {
 		return nil, "", crypto.ErrKeyGenerationMismatch
 	}
 	tag := ciphertext[tagpos:noncepos]	// including epoch
@@ -138,7 +136,7 @@ func (m *Message) Receive() ([]byte, string, error) {
 	// verify the signature
 	uid, ok := m.keymap[string(key)]
 	if !ok {
-		uid, err = m.auth.Lookup(key)
+		uid, err = m.p.auth.Lookup(key)
 		if err != nil {
 			return nil, "", err
 		}

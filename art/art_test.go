@@ -17,6 +17,7 @@ import (
 type node struct {
 	b crypto.GroupElement
 	e crypto.GroupExponent
+	idx int
 }
 
 func TestFrontier(t *testing.T) {
@@ -51,17 +52,45 @@ func TestRootKey(t *testing.T) {
 	}
 	rootKey := rt.RootKey()
 	for i := 0; i < n; i++ {
-		k, _ := rt.calculate(i, rt.g.Encode(leaves[i].e))
+		k, _ := rt.calculate(leaves[i].idx, rt.g.Encode(leaves[i].e))
 		if !bytes.Equal(rootKey, k) {
 			t.Fatalf("the root key mismatch")
 		}
 	}
-	frontier, ok := rt.tree.Frontier()
+	frontier, ok := rt.Frontier()
 	if !ok {
 		t.Fatalf("couldn't get frontier")
 	}
 	fmt.Printf("=== Frontier ===\n")
 	printPath(rt.g, frontier)
+
+	//
+	// with the frontier, we add a new leaf and update the original tree with the new path
+	// now create a new node with the frontier
+	//
+	nt := New(g, frontier, rt.Size())
+	// add a leaf
+	_, e, err := g.GenerateKey()
+	if err != nil {
+		t.Fatal(err)
+	}
+	idx := nt.Add(e)
+	if idx < 0 {
+		t.Fatal("Add() failed")
+	}
+	path := nt.DirectPath(idx)
+	// update the original tree with the new path
+	for i := 0; i < n; i++ {
+		tt := rt.Copy()
+		nidx := tt.AddPath(path, leaves[i].idx, leaves[i].e)
+		if nidx != idx {
+			t.Fatalf("AddPath() failed: %d vs %d", nidx, idx)
+		}
+		// now check if we've got the same root key
+		if !bytes.Equal(nt.RootKey(), tt.RootKey()) {
+			t.Fatalf("the new root key mismatch: [%d] %x vs %x", i, rt.RootKey(), tt.RootKey())
+		}
+	}
 }
 
 func generateTree(rt *RatchetTree, n int) (leaves []*node, err error) {
@@ -72,8 +101,8 @@ func generateTree(rt *RatchetTree, n int) (leaves []*node, err error) {
 		if err != nil {
 			return nil, err
 		}
-		leaves[i] = &node{b, e}
 		idx := rt.Add(e)
+		leaves[i] = &node{b, e, idx}
 		fmt.Printf("[%d] %x\n", idx, rt.g.Marshal(b))
 	}
 	fmt.Printf("=== tree ===\n")
@@ -83,13 +112,12 @@ func generateTree(rt *RatchetTree, n int) (leaves []*node, err error) {
 	return leaves, nil
 }
 
-func printPath(g crypto.GroupOperation, path []interface{}) {
+func printPath(g crypto.GroupOperation, path [][]byte) {
 	for i, p := range path {
 		if p == nil {
 			fmt.Printf("[%d] nil\n", i)
 		} else {
-			v := g.Marshal(p.(crypto.GroupElement))
-			fmt.Printf("[%d] %x\n", i, v)
+			fmt.Printf("[%d] %x\n", i, p)
 		}
 	}
 }

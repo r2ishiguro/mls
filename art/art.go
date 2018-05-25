@@ -4,6 +4,9 @@
 package art
 
 import (
+	"bytes"
+	"fmt"
+
 	"github.com/r2ishiguro/mls/lbt"
 	"github.com/r2ishiguro/mls/crypto"
 )
@@ -45,7 +48,7 @@ func (rt *RatchetTree) Update(idx int, leaf crypto.GroupExponent) bool {	// alwa
 	return true
 }
 
-func (rt *RatchetTree) AddPath(path [][]byte, self int, priv []byte) int {
+func (rt *RatchetTree) AddPath(path [][]byte, self int, priv crypto.GroupExponent) int {
 	rt.tree.Add(nil)
 	// update the direct path from the added node
 	idx := rt.tree.Size() - 1
@@ -55,15 +58,34 @@ func (rt *RatchetTree) AddPath(path [][]byte, self int, priv []byte) int {
 	return idx
 }
 
-func (rt *RatchetTree) UpdatePath(idx int, path [][]byte, self int, priv []byte) bool {
+func (rt *RatchetTree) UpdatePath(idx int, path [][]byte, self int, priv crypto.GroupExponent) bool {
 	direct := make([]interface{}, len(path) + 1)	// +1 for the root
 	for i, v := range path {
 		direct[i] = rt.g.Unmarshal(v)
 	}
 	rt.tree.Update(idx, direct)
-	root, _ := rt.calculate(self, rt.g.Decode(priv))
+	root, cpath := rt.calculate(self, priv)
 	if root == nil {
 		return false
+	}
+	// double-check the calculated path and the path in the current tree are the same
+	tpath := rt.DirectPath(self)
+	for i, p := range tpath {
+		if !bytes.Equal(p, rt.g.Marshal(cpath[i])) {
+			fmt.Printf("UpdatePath: failed. tree:\n")
+			rt.TraceTree(func(level int, size int, value interface{}) {
+				if value == nil {
+					fmt.Printf("[%d] nil (%d)\n", level, size)
+				} else {
+					fmt.Printf("[%d] %x (%d)\n", level, rt.g.Marshal(value), size)
+				}
+			})
+			fmt.Printf("calculated path:\n")
+			for j := 0; j < len(cpath); j++ {
+				fmt.Printf("[%d] %x\n", j, rt.g.Marshal(cpath[j]))
+			}
+			return false
+		}
 	}
 	rt.rootKey = root
 	return true

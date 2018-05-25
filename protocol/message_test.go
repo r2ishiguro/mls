@@ -26,14 +26,14 @@ func TestMessage(t *testing.T) {
 		t.Fatal(err)
 	}
 	time.Sleep(time.Second)
-	clients, err := testHandshake()
+	clients, err := testHandshake(testUIDs)
 	if err != nil {
 		t.Fatal(err)
 	}
 
 	var messages []*Message
 	for _, client := range clients {
-		channel := client.channels[gid]
+		channel := client.channels[testGroupId]
 		m, err := channel.NewMessage(messageAddress)
 		if err != nil {
 			t.Fatal(err)

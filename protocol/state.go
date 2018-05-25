@@ -20,7 +20,7 @@ import (
 type GroupState struct {
 	gid string
 	cipherSuite mls.CipherSuite
-	ratchetTree *art.RatchetTree	// keep the shape of two trees the same
+	ratchetTree *art.RatchetTree
 	merkleTree *merkle.MerkleTree
 	epoch uint32
 	suk crypto.GroupExponent	// add key (private)
@@ -60,8 +60,6 @@ func NewGroupState(gid string, cipher mls.CipherSuite, sig *mls.Signature) (*Gro
 		sig: sig,
 	}
 
-	g.mutex.Lock()
-	defer g.mutex.Unlock()
 	g.ratchetTree = art.New(g.dh, nil, 0)
 	g.merkleTree = merkle.New(g.hash, nil, 0)
 	g.epoch = 0
@@ -73,10 +71,8 @@ func NewGroupStateWithGIK(gik *mls.GroupInitKey, sig *mls.Signature) (*GroupStat
 	if err != nil {
 		return nil, err
 	}
-	g.sukPub = g.dh.Unmarshal(gik.AddKey)
+	g.sukPub = g.dh.Unmarshal(gik.AddKey)	// keep this SUK until the instance's gone
 
-	g.mutex.Lock()
-	defer g.mutex.Unlock()
 	g.ratchetTree = art.New(g.dh, gik.RatchetFrontier, int(gik.GroupSize))
 	g.merkleTree = merkle.New(g.hash, gik.MerkleFrontier, int(gik.GroupSize))
 	g.epoch = gik.Epoch
@@ -101,29 +97,6 @@ func (g *GroupState) AddSelf(privKey []byte, identityKey []byte) (int, error) {
 	g.self = idx
 	g.privKey = privKey
 	return idx, nil
-}
-
-func (g *GroupState) ConstructGroupInitKey() (*mls.GroupInitKey, error) {
-	g.mutex.Lock()
-	defer g.mutex.Unlock()
-	gik := &mls.GroupInitKey{
-		Epoch: g.epoch,
-		GroupSize: uint32(g.ratchetTree.Size()),
-		GroupId: g.gid,
-		Cipher: g.cipherSuite,
-		AddKey: g.dh.Marshal(g.dh.DH(nil, g.suk)),
-	}
-	if frontier, ok := g.merkleTree.Frontier(); ok {
-		gik.MerkleFrontier = frontier
-	} else {
-		return nil, mls.ErrMerkleTree
-	}
-	if frontier, ok := g.ratchetTree.Frontier(); ok {
-		gik.RatchetFrontier = frontier
-	} else {
-		return nil, mls.ErrRatchetTree
-	}
-	return gik, nil
 }
 
 func (g *GroupState) AddUser(uik *mls.UserInitKey) (int, error) {
@@ -160,13 +133,20 @@ func (g *GroupState) AddPath(path [][]byte, identityKey []byte) (int, error) {
 	return idx, nil
 }
 
-func (g *GroupState) UpdateSelf(privKeys [][]byte) error {
+func (g *GroupState) UpdateSelf(privKey []byte) error {
 	g.mutex.Lock()
 	defer g.mutex.Unlock()
 
-	if !g.ratchetTree.Update(g.self, g.dh.Decode(privKeys[g.cipherSuite])) {	// use the private key *as-is* (not with SUK)
+	var e crypto.GroupExponent
+	if g.sukPub != nil {
+		e = g.dh.Injection(g.dh.DH(g.sukPub, g.dh.Decode(privKey)))
+	} else {
+		e = g.dh.Decode(privKey)
+	}
+	if !g.ratchetTree.Update(g.self, e) {
 		return mls.ErrRatchetTree
 	}
+	g.privKey = privKey	// update the private key for the later use
 	// no need to update the merkle tree
 	return nil
 }
@@ -174,7 +154,14 @@ func (g *GroupState) UpdateSelf(privKeys [][]byte) error {
 func (g *GroupState) UpdatePath(idx int, path [][]byte) error {
 	g.mutex.Lock()
 	defer g.mutex.Unlock()
-	if !g.ratchetTree.UpdatePath(idx, path, g.self, g.privKey) {
+
+	var e crypto.GroupExponent
+	if g.sukPub != nil {
+		e = g.dh.Injection(g.dh.DH(g.sukPub, g.dh.Decode(g.privKey)))
+	} else {
+		e = g.dh.Decode(g.privKey)
+	}
+	if !g.ratchetTree.UpdatePath(idx, path, g.self, e) {
 		return mls.ErrRatchetTree
 	}
 	return nil
@@ -253,9 +240,13 @@ func (g *GroupState) Epoch() uint32 {
 	return g.epoch
 }
 
-func (g *GroupState) KeyScheduling(init bool, msg []byte) error {
+func (g *GroupState) KeyScheduling(init bool, msg []byte, priorEpoch uint32) error {	// priorEpoch must be the same as the one in the message
 	g.mutex.Lock()
 	defer g.mutex.Unlock()
+
+	if priorEpoch != g.epoch {
+		return ErrEpochOutOfSync
+	}
 
 	if init {
 		for i, _ := range g.initSecret {
@@ -286,6 +277,29 @@ func (g *GroupState) deriveSecret(label string, msg []byte, key []byte) error {
 	hkdf := hkdf.New(g.hash, g.ratchetTree.RootKey()/*secret*/, g.initSecret/*salt*/, info)
 	_, err = io.ReadFull(hkdf, key)
 	return err
+}
+
+func (g *GroupState) ConstructGroupInitKey() (*mls.GroupInitKey, error) {
+	g.mutex.Lock()
+	defer g.mutex.Unlock()
+	gik := &mls.GroupInitKey{
+		Epoch: g.epoch,
+		GroupSize: uint32(g.ratchetTree.Size()),
+		GroupId: g.gid,
+		Cipher: g.cipherSuite,
+		AddKey: g.dh.Marshal(g.dh.DH(nil, g.suk)),
+	}
+	if frontier, ok := g.merkleTree.Frontier(); ok {
+		gik.MerkleFrontier = frontier
+	} else {
+		return nil, mls.ErrMerkleTree
+	}
+	if frontier, ok := g.ratchetTree.Frontier(); ok {
+		gik.RatchetFrontier = frontier
+	} else {
+		return nil, mls.ErrRatchetTree
+	}
+	return gik, nil
 }
 
 func GenerateUserInitKey(ciphers []mls.CipherSuite, sig *mls.Signature) (*mls.UserInitKey, map[mls.CipherSuite][]byte, error) {

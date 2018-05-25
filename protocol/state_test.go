@@ -142,8 +142,8 @@ func TestGroupState(t *testing.T) {
 	}
 
 	msg := []byte("msg...")
-	g.KeyScheduling(false, msg)
-	ng.KeyScheduling(false, msg)
+	g.KeyScheduling(false, msg, 0)
+	ng.KeyScheduling(false, msg, 0)
 	if !bytes.Equal(g.MessageKey(), ng.MessageKey()) {
 		t.Fatalf("message key mismatch")
 	}
