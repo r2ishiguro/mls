@@ -87,7 +87,7 @@ func main() {
 			flag.Usage()
 			return
 		}
-		echo(av[1], *dsAddrp, *msgAddrp, client)
+		join(av[1], *dsAddrp, *msgAddrp, client)
 	case "add":
 		if ac < 2 {
 			flag.Usage()
@@ -120,7 +120,7 @@ func main() {
 	client.Close()
 }
 
-func startChannel(client *protocol.Protocol, addr string, gid string) *protocol.GroupChannel {
+func startChannel(client *protocol.Protocol, addr string, gid string, done chan error) *protocol.GroupChannel {
 	if err := client.Connect(addr); err != nil {
 		log.Fatal(err)
 	}
@@ -128,6 +128,9 @@ func startChannel(client *protocol.Protocol, addr string, gid string) *protocol.
 		err := client.Run()
 		if err != nil {
 			log.Print(err)
+		}
+		if done != nil {
+			done <- err
 		}
 	}(client)
 
@@ -143,8 +146,9 @@ func startChannel(client *protocol.Protocol, addr string, gid string) *protocol.
 	return channel
 }
 
-func echo(gid string, dsAddr string, msgAddr string, client *protocol.Protocol) {
-	channel := startChannel(client, dsAddr, gid)
+func join(gid string, dsAddr string, msgAddr string, client *protocol.Protocol) {
+	done := make(chan error)
+	channel := startChannel(client, dsAddr, gid, done)
 	sig := make(chan os.Signal, 3)
 	signal.Notify(sig, syscall.SIGINT, syscall.SIGABRT, syscall.SIGQUIT, syscall.SIGTERM)
 
@@ -185,10 +189,11 @@ func echo(gid string, dsAddr string, msgAddr string, client *protocol.Protocol) 
 
 	<- sig
 	channel.Close()
+	<- done
 }
 
 func add(gid string, members []string, dsAddr string, client *protocol.Protocol) {
-	channel := startChannel(client, dsAddr, gid)
+	channel := startChannel(client, dsAddr, gid, nil)
 	if err := channel.AddMembers(members); err != nil {
 		log.Fatal(err)
 	}
@@ -204,7 +209,7 @@ func add(gid string, members []string, dsAddr string, client *protocol.Protocol)
 }
 
 func ping(gid string, dsAddr string, client *protocol.Protocol) {
-	channel := startChannel(client, dsAddr, gid)
+	channel := startChannel(client, dsAddr, gid, nil)
 
 	for i := 1; ; i++ {
 		fmt.Printf("%d\n", i)
