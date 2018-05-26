@@ -37,6 +37,9 @@ type Delete struct {
 	Path [][]byte	// DHPublicKey
 }
 
+type None struct {
+}
+
 type HandshakeType byte
 const (
 	HandshakeNone HandshakeType = 0

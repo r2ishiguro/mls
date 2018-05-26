@@ -7,10 +7,15 @@ import (
 	"io"
 	"crypto/rand"
 	"encoding/binary"
+	"errors"
+	"fmt"
 
 	"github.com/r2ishiguro/mls"
 	"github.com/r2ishiguro/mls/ds"
-	"github.com/r2ishiguro/mls/crypto"
+)
+
+var (
+	ErrKeyGenerationMismatch = errors.New("key generation mismatch")
 )
 
 const (
@@ -129,7 +134,8 @@ func (m *Message) Receive() ([]byte, string, error) {
 	nonce := ciphertext[noncepos:keypos]
 	epoch := binary.BigEndian.Uint32(ciphertext[epochpos:noncepos])
 	if epoch != m.g.Epoch() {
-		return nil, "", crypto.ErrKeyGenerationMismatch
+		fmt.Printf("[%s] epoch mismatch: got = %d, have = %d\n", m.p.self, epoch, m.g.Epoch())
+		return nil, "", ErrKeyGenerationMismatch
 	}
 	tag := ciphertext[tagpos:noncepos]	// including epoch
 

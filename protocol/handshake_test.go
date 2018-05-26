@@ -103,9 +103,11 @@ func TestHandshake(t *testing.T) {
 		t.Fatal(err)
 	}
 	time.Sleep(time.Second)
-	if _, err := testHandshake(testUIDs); err != nil {
+	clients, err := testHandshake(testUIDs)
+	if err != nil {
 		t.Fatal(err)
 	}
+	tearingDown(clients)
 }
 
 func testHandshake(uids []string) ([]*Protocol, error) {
@@ -151,7 +153,7 @@ func TestJoin(t *testing.T) {
 		t.Fatal(err)
 	}
 	time.Sleep(time.Second)
-	clients, err := testHandshake([]string{"user0", "user1"}/*testUIDs*/)
+	clients, err := testHandshake(testUIDs)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -172,6 +174,7 @@ func TestJoin(t *testing.T) {
 	if err := checkSync(append(clients, p)); err != nil {
 		t.Fatal(err)
 	}
+	tearingDown(clients)
 }
 
 func createClients(uids []string) ([]*Protocol, error) {
@@ -231,6 +234,27 @@ func checkSync(clients []*Protocol) error {
 		}
 	}
 	return nil
+}
+
+func tearingDown(clients []*Protocol) {
+	fmt.Printf("tearing down...\n")
+	for _, c := range clients {
+		c.Close()
+	}
+	allDown := false
+	for retry := 5; retry > 0 && !allDown; retry-- {
+		allDown = true
+		for _, c := range clients {
+			if _, ok := c.channels[testGroupId]; ok {
+				allDown = false
+				break
+			}
+		}
+		time.Sleep(time.Second)
+	}
+	if !allDown {
+		fmt.Printf("some clients are still running...\n")
+	}
 }
 
 //

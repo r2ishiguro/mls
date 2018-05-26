@@ -7,6 +7,7 @@ import (
 	"sync"
 	"io"
 	"hash"
+	"fmt"
 
 	"golang.org/x/crypto/hkdf"
 
@@ -81,13 +82,7 @@ func NewGroupStateWithGIK(gik *mls.GroupInitKey, sig *mls.Signature) (*GroupStat
 
 func (g *GroupState) AddSelf(privKey []byte, identityKey []byte) (int, error) {
 	// add the self node
-	var e crypto.GroupExponent
-	if g.sukPub != nil {
-		e = g.dh.Injection(g.dh.DH(g.sukPub, g.dh.Decode(privKey)))
-	} else {
-		e = g.dh.Decode(privKey)
-	}
-	idx := g.ratchetTree.Add(e)
+	idx := g.ratchetTree.Add(g.leafKey(privKey))
 	if idx < 0 {
 		return -1, mls.ErrRatchetTree
 	}
@@ -123,8 +118,20 @@ func (g *GroupState) AddPath(path [][]byte, identityKey []byte) (int, error) {
 	g.mutex.Lock()
 	defer g.mutex.Unlock()
 
-	idx := g.ratchetTree.AddPath(path, g.self, g.privKey)
+	idx := g.ratchetTree.AddPath(path, g.self, g.leafKey(g.privKey))
 	if idx < 0 {
+		fmt.Printf("AddPath failed: %d\n", g.self)
+		g.ratchetTree.TraceTree(func(level int, size int, value interface{}) {
+			if value == nil {
+				fmt.Printf("[%d] nil (%d)\n", level, size)
+			} else {
+				fmt.Printf("[%d] %x (%d)\n", level, g.dh.Marshal(value.(crypto.GroupExponent)), size)
+			}
+		})
+		fmt.Printf("path = \n")
+		for i := 0; i < len(path); i++ {
+			fmt.Printf("  %x\n", path[i])
+		}
 		return -1, mls.ErrRatchetTree
 	}
 	if g.merkleTree.Add(identityKey) != idx {
@@ -137,13 +144,7 @@ func (g *GroupState) UpdateSelf(privKey []byte) error {
 	g.mutex.Lock()
 	defer g.mutex.Unlock()
 
-	var e crypto.GroupExponent
-	if g.sukPub != nil {
-		e = g.dh.Injection(g.dh.DH(g.sukPub, g.dh.Decode(privKey)))
-	} else {
-		e = g.dh.Decode(privKey)
-	}
-	if !g.ratchetTree.Update(g.self, e) {
+	if !g.ratchetTree.Update(g.self, g.leafKey(privKey)) {
 		return mls.ErrRatchetTree
 	}
 	g.privKey = privKey	// update the private key for the later use
@@ -155,13 +156,7 @@ func (g *GroupState) UpdatePath(idx int, path [][]byte) error {
 	g.mutex.Lock()
 	defer g.mutex.Unlock()
 
-	var e crypto.GroupExponent
-	if g.sukPub != nil {
-		e = g.dh.Injection(g.dh.DH(g.sukPub, g.dh.Decode(g.privKey)))
-	} else {
-		e = g.dh.Decode(g.privKey)
-	}
-	if !g.ratchetTree.UpdatePath(idx, path, g.self, e) {
+	if !g.ratchetTree.UpdatePath(idx, path, g.self, g.leafKey(g.privKey)) {
 		return mls.ErrRatchetTree
 	}
 	return nil
@@ -188,6 +183,16 @@ func (g *GroupState) DeletePath(idx int, path [][]byte) error {
 	return g.UpdatePath(idx, path)
 }
 
+func (g *GroupState) leafKey(privKey []byte) crypto.GroupExponent {
+	var e crypto.GroupExponent
+	if g.sukPub != nil {
+		e = g.dh.Injection(g.dh.DH(g.sukPub, g.dh.Decode(privKey)))
+	} else {
+		e = g.dh.Decode(privKey)
+	}
+	return e
+}
+
 func (g *GroupState) Copy() (*GroupState, error) {
 	ng, err := NewGroupState(g.gid, g.cipherSuite, g.sig)
 	if err != nil {
@@ -203,6 +208,16 @@ func (g *GroupState) Copy() (*GroupState, error) {
 	ng.self = g.self
 	ng.privKey = g.privKey	// reference is fine
 	return ng, nil
+}
+
+func (g *GroupState) CopyBack(ng *GroupState) {
+	g.ratchetTree = ng.ratchetTree
+	g.merkleTree = ng.merkleTree
+	g.epoch = ng.epoch
+	g.suk = ng.suk	// the public part shouldn't have changed
+	copy(g.messageSecret, ng.messageSecret)
+	copy(g.initSecret, ng.initSecret)
+	g.privKey = ng.privKey
 }
 
 func (g *GroupState) GetPath(leaf int) [][]byte {

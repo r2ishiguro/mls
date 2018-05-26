@@ -5,11 +5,6 @@ package crypto
 
 import (
 	"crypto/cipher"
-	"errors"
-)
-
-var (
-	ErrKeyGenerationMismatch = errors.New("key generation mismatch")
 )
 
 type DataEncryption interface {

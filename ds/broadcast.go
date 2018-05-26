@@ -95,7 +95,7 @@ func (s *broadcaster) run() {
 			s.epoch = bm.msg.PriorEpoch
 			s.broadcast(bm.pkt)
 		} else {
-			log.Printf("broadcast: %d != %d", bm.msg.PriorEpoch, s.epoch + 1)
+			log.Printf("broadcast: got %d != %d", bm.msg.PriorEpoch, s.epoch + 1)
 		}
 		s.mutex.Unlock()
 	}

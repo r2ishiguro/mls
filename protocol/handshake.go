@@ -210,6 +210,8 @@ func (p *Protocol) marshal(g *GroupState, data interface{}) ([]byte, error) {
 		msg.Type = packet.HandshakeUpdate
 	case *packet.Delete:
 		msg.Type = packet.HandshakeDelete
+	case *packet.None:
+		msg.Type = packet.HandshakeNone
 	default:
 		return nil, packet.ErrUnknownMessageType
 	}
@@ -246,8 +248,13 @@ func (p *Protocol) Handler(r io.Reader) error {
 			channel = nil
 		}
 		if err := GroupChannelHandler(p, channel, msg, pkt); err != nil {
+			if err == io.EOF {
+				delete(p.channels, msg.GIK.GroupId)
+				return err
+			}
 			log.Printf("handshake: [%s] handler error: %s", p.self, err)
 			// continue...
 		}
 	}
+	return nil
 }

@@ -163,7 +163,7 @@ func coPath(root *node, leaf int) (path []interface{}, ok bool) {
 	}
 	if root.size == 1 {	// reached a leaf
 		if leaf != 0 {
-			panic("corrupted")
+			panic("lbt: corrupted")
 		}
 		return nil, true
 	}

@@ -68,4 +68,5 @@ func TestMessage(t *testing.T) {
 	for _, m := range messages {
 		m.Close()
 	}
+	tearingDown(clients)
 }

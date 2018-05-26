@@ -102,6 +102,18 @@ func main() {
 		for _, uid := range dir.ListUsers() {
 			fmt.Printf("%s\n", uid)
 		}
+	case "group":
+		if ac < 2 {
+			flag.Usage()
+			return
+		}
+		printGroup(av[1], dir)
+	case "ping":
+		if ac < 2 {
+			flag.Usage()
+			return
+		}
+		ping(av[1], *dsAddrp, client)
 	default:
 		flag.Usage()
 	}
@@ -114,7 +126,6 @@ func startChannel(client *protocol.Protocol, addr string, gid string) *protocol.
 	}
 	go func(client *protocol.Protocol) {
 		err := client.Run()
-		client.Close()
 		if err != nil {
 			log.Print(err)
 		}
@@ -124,7 +135,7 @@ func startChannel(client *protocol.Protocol, addr string, gid string) *protocol.
 	channel, err := client.Join(gid)
 	if err == protocol.ErrGroupNotFound {
 		// the group doesn't exist, then create the new one
-		channel, err = client.NewGroupChannelWithGID(gid, mls.CipherP256R1WithSHA256)
+		channel, err = client.CreateGroupChannel(gid, mls.CipherP256R1WithSHA256)
 	}
 	if err != nil {
 		log.Fatalf("joining error: %s", err)
@@ -161,10 +172,11 @@ func echo(gid string, dsAddr string, msgAddr string, client *protocol.Protocol) 
 		for {
 			msg, sender, err := m.Receive()
 			if err != nil {
-				if err != io.EOF {
-					log.Print(err)
+				if err == io.EOF {
+					break
 				}
-				break
+				log.Print(err)
+				continue
 			}
 			fmt.Printf("[%s => %s] %s\n", sender, client.UId(), string(msg))
 		}
@@ -189,6 +201,18 @@ func add(gid string, members []string, dsAddr string, client *protocol.Protocol)
 		}
 	}
 	channel.Close()
+}
+
+func ping(gid string, dsAddr string, client *protocol.Protocol) {
+	channel := startChannel(client, dsAddr, gid)
+
+	for i := 1; ; i++ {
+		fmt.Printf("%d\n", i)
+		if err := channel.None(); err != nil {
+			log.Fatal(err)
+		}
+		time.Sleep(time.Second)
+	}
 }
 
 func readIdentityKey(path string) (pub, priv []byte, err error) {
@@ -223,4 +247,21 @@ func writeIdentityKey(path string, pub, priv []byte) error {
 		os.Rename(privPath + "~", privPath)
 	}
 	return err
+}
+
+func printGroup(gid string, dir *ds.DirectoryService) {
+	gik, err := dir.LookupGroup(gid)
+	if err != nil {
+		log.Print(err)
+	}
+	fmt.Printf("ID: %s, size: %d, epoch: %d\n", gik.GroupId, gik.GroupSize, gik.Epoch)
+	fmt.Printf("  SUK:\n    %x\n", gik.AddKey)
+	fmt.Printf("  ratchet frontier:\n")
+	for i := 0; i < len(gik.RatchetFrontier); i++ {
+		fmt.Printf("    %x\n", gik.RatchetFrontier[i])
+	}
+	fmt.Printf("  merkle frontier:\n")
+	for i := 0; i < len(gik.MerkleFrontier); i++ {
+		fmt.Printf("    %x\n", gik.MerkleFrontier[i])
+	}
 }

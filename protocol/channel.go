@@ -6,6 +6,7 @@ package protocol
 import (
 	"bytes"
 	"log"
+	"io"
 	"fmt"
 
 	"github.com/r2ishiguro/mls"
@@ -117,16 +118,6 @@ func (c *GroupChannel) AddMembers(members []string) error {
 
 func (c *GroupChannel) Join() error {
 	path := c.state.GetSelfPath()
-
-	fmt.Printf("Join: %d\n", c.state.self)
-	c.state.ratchetTree.TraceTree(func(level int, size int, value interface{}) {
-		if value == nil {
-			fmt.Printf("[%d] nil (%d)\n", level, size)
-		} else {
-			fmt.Printf("[%d] %x (%d)\n", level, c.state.dh.Marshal(value), size)
-		}
-	})
-
 	pkt, err := c.protocol.marshal(c.state, &packet.UserAdd{path})	// use the updated GIK
 	if err != nil {
 		return err
@@ -178,6 +169,17 @@ func (c *GroupChannel) Delete(member string) error {
 	return nil
 }
 
+func (c *GroupChannel) None() error {
+	pkt, err := c.protocol.marshal(c.state, &packet.None{})
+	if err != nil {
+		return err
+	}
+	if err := c.protocol.ds.Send(pkt); err != nil {
+		return err
+	}
+	return nil
+}
+
 func (c *GroupChannel) List() []string {
 	var res []string
 	for uid, _ := range c.peers {
@@ -198,13 +200,14 @@ func (c *GroupChannel) NewMessage(msgAddr string) (*Message, error) {
 func (c *GroupChannel) Close() {
 	if c.message != nil {
 		c.message.Close()
+		c.message = nil
 	}
-	delete(c.protocol.channels, c.gid)	// remove from the channels to prevent double Close
 	c.Delete(c.protocol.self)		// then broadcast the Delete message too all but self
 }
 
 func GroupChannelHandler(p *Protocol, channel *GroupChannel, msg *packet.HandshakeMessage, pkt []byte) error {
 	init := false
+	eof := false
 	switch msg.Type {
 	case packet.HandshakeNone:	// to return the GroupInitKey in Handshake
 		// no-op
@@ -241,7 +244,7 @@ func GroupChannelHandler(p *Protocol, channel *GroupChannel, msg *packet.Handsha
 				return err
 			}
 			// now update the state
-			channel.state = ng
+			channel.state.CopyBack(ng)
 			channel.peers[uid] = idx
 		}
 		init = true
@@ -297,9 +300,6 @@ func GroupChannelHandler(p *Protocol, channel *GroupChannel, msg *packet.Handsha
 		}
 	case packet.HandshakeDelete:
 		if channel == nil {
-			if bytes.Equal(msg.IdentityKey, p.sig.PublicKey()) {
-				return nil	// sent by self and the channel already has been closed
-			}
 			return ErrGroupNotFound
 		}
 		if err := verifyProof(channel.state, msg); err != nil {
@@ -307,7 +307,10 @@ func GroupChannelHandler(p *Protocol, channel *GroupChannel, msg *packet.Handsha
 		}
 		del := msg.Data.(*packet.Delete)
 		if int(del.Index) == channel.peers[p.self] {
-			channel.Close()		// delete me
+			if channel.message != nil {
+				channel.message.Close()
+			}
+			eof = true
 		} else {
 			if err := channel.state.DeletePath(int(del.Index), del.Path); err != nil {
 				return err
@@ -319,11 +322,14 @@ func GroupChannelHandler(p *Protocol, channel *GroupChannel, msg *packet.Handsha
 	if err := channel.state.KeyScheduling(init, pkt, msg.PriorEpoch); err != nil {
 		return err
 	}
-	// someone initiated the message is responsible to update GIK
+	// someone who has initiated the message is responsible to update GIK
 	if bytes.Equal(msg.IdentityKey, p.sig.PublicKey()) {
 		if err := channel.RegisterGIK(); err != nil {
 			return err
 		}
+	}
+	if eof {
+		return io.EOF
 	}
 	return nil
 }
