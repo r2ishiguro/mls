@@ -88,12 +88,6 @@ func main() {
 			return
 		}
 		join(av[1], *dsAddrp, *msgAddrp, client)
-	case "add":
-		if ac < 2 {
-			flag.Usage()
-			return
-		}
-		add(av[1], av[2:], *dsAddrp, client)
 	case "groups":	// list all groups
 		for _, gid := range dir.ListGroups() {
 			fmt.Printf("%s\n", gid)
@@ -120,7 +114,7 @@ func main() {
 	client.Close()
 }
 
-func startChannel(client *protocol.Protocol, addr string, gid string, done chan error) *protocol.GroupChannel {
+func startChannel(client *protocol.Protocol, addr string, gid string) *protocol.GroupChannel {
 	if err := client.Connect(addr); err != nil {
 		log.Fatal(err)
 	}
@@ -128,9 +122,6 @@ func startChannel(client *protocol.Protocol, addr string, gid string, done chan 
 		err := client.Run()
 		if err != nil {
 			log.Print(err)
-		}
-		if done != nil {
-			done <- err
 		}
 	}(client)
 
@@ -147,8 +138,7 @@ func startChannel(client *protocol.Protocol, addr string, gid string, done chan 
 }
 
 func join(gid string, dsAddr string, msgAddr string, client *protocol.Protocol) {
-	done := make(chan error)
-	channel := startChannel(client, dsAddr, gid, done)
+	channel := startChannel(client, dsAddr, gid)
 	sig := make(chan os.Signal, 3)
 	signal.Notify(sig, syscall.SIGINT, syscall.SIGABRT, syscall.SIGQUIT, syscall.SIGTERM)
 
@@ -189,27 +179,14 @@ func join(gid string, dsAddr string, msgAddr string, client *protocol.Protocol) 
 
 	<- sig
 	channel.Close()
-	<- done
-}
 
-func add(gid string, members []string, dsAddr string, client *protocol.Protocol) {
-	channel := startChannel(client, dsAddr, gid, nil)
-	if err := channel.AddMembers(members); err != nil {
-		log.Fatal(err)
-	}
-	// poll the status to check if it has finished
-	for retry := 3; retry > 0; retry-- {
-		time.Sleep(time.Second)
-		fmt.Printf("%d...\n", retry)
-		for _, uid := range channel.List() {
-			fmt.Printf("%s\n", uid)
-		}
-	}
-	channel.Close()
+	// buy time to teardown the channel...
+	fmt.Printf("channel closed. Hit return to finish...")
+	bufio.NewReader(os.Stdin).ReadString('\n')
 }
 
 func ping(gid string, dsAddr string, client *protocol.Protocol) {
-	channel := startChannel(client, dsAddr, gid, nil)
+	channel := startChannel(client, dsAddr, gid)
 
 	for i := 1; ; i++ {
 		fmt.Printf("%d\n", i)
@@ -263,7 +240,14 @@ func printGroup(gid string, dir *ds.DirectoryService) {
 	fmt.Printf("  SUK:\n    %x\n", gik.AddKey)
 	fmt.Printf("  ratchet frontier:\n")
 	for i := 0; i < len(gik.RatchetFrontier); i++ {
-		fmt.Printf("    %x\n", gik.RatchetFrontier[i])
+		node := gik.RatchetFrontier[i]
+		if node == nil {
+			fmt.Printf("    nil\n")
+		} else if len(node) == 0 {
+			fmt.Printf("    0\n")
+		} else {
+			fmt.Printf("    %x\n", node)
+		}
 	}
 	fmt.Printf("  merkle frontier:\n")
 	for i := 0; i < len(gik.MerkleFrontier); i++ {

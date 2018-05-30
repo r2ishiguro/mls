@@ -7,7 +7,6 @@ import (
 	"sync"
 	"io"
 	"hash"
-	"fmt"
 
 	"golang.org/x/crypto/hkdf"
 
@@ -120,18 +119,6 @@ func (g *GroupState) AddPath(path [][]byte, identityKey []byte) (int, error) {
 
 	idx := g.ratchetTree.AddPath(path, g.self, g.leafKey(g.privKey))
 	if idx < 0 {
-		fmt.Printf("AddPath failed: %d\n", g.self)
-		g.ratchetTree.TraceTree(func(level int, size int, value interface{}) {
-			if value == nil {
-				fmt.Printf("[%d] nil (%d)\n", level, size)
-			} else {
-				fmt.Printf("[%d] %x (%d)\n", level, g.dh.Marshal(value.(crypto.GroupExponent)), size)
-			}
-		})
-		fmt.Printf("path = \n")
-		for i := 0; i < len(path); i++ {
-			fmt.Printf("  %x\n", path[i])
-		}
 		return -1, mls.ErrRatchetTree
 	}
 	if g.merkleTree.Add(identityKey) != idx {
@@ -172,7 +159,7 @@ func (g *GroupState) DeleteUser(idx int) error {
 	}
 	ek := junk[g.cipherSuite]
 	if !g.ratchetTree.Update(idx, g.dh.Decode(ek)) {
-		return mls.ErrRatchetTree
+		return mls.ErrRatchetTree	// can't delete this user because I don't have the copath of this node
 	}
 	// do not touch the merkle tree
 	return nil

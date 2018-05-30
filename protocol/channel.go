@@ -156,10 +156,26 @@ func (c *GroupChannel) Delete(member string) error {
 		return err
 	}
 	if err := ng.DeleteUser(idx); err != nil {
+		if err == mls.ErrRatchetTree {
+			err = ErrUserNotFound
+		}
 		return err
 	}
 	path := ng.GetPath(idx)
 	pkt, err := c.protocol.marshal(c.state, &packet.Delete{uint32(idx), path})
+	if err != nil {
+		return err
+	}
+	if err := c.protocol.ds.Send(pkt); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (c *GroupChannel) DeleteSelf() error {
+	// can't delete itself the way Delete() does as the (junk) private key is necessary to do key scheduling and update GIK...
+	idx := c.peers[c.protocol.self]
+	pkt, err := c.protocol.marshal(c.state, &packet.Delete{uint32(idx), [][]byte{}})	// null path shouldn't have any effect..
 	if err != nil {
 		return err
 	}
@@ -202,7 +218,7 @@ func (c *GroupChannel) Close() {
 		c.message.Close()
 		c.message = nil
 	}
-	c.Delete(c.protocol.self)		// then broadcast the Delete message too all but self
+	c.DeleteSelf()
 }
 
 func GroupChannelHandler(p *Protocol, channel *GroupChannel, msg *packet.HandshakeMessage, pkt []byte) error {
@@ -215,7 +231,7 @@ func GroupChannelHandler(p *Protocol, channel *GroupChannel, msg *packet.Handsha
 		// no-op
 	case packet.HandshakeUserAdd:
 		if channel == nil {
-			return ErrGroupNotFound
+			return nil
 		}
 		addPath := msg.Data.(*packet.UserAdd).Path
 		if bytes.Equal(msg.IdentityKey, p.sig.PublicKey()) {
@@ -258,7 +274,6 @@ func GroupChannelHandler(p *Protocol, channel *GroupChannel, msg *packet.Handsha
 			// someone has added me
 			if channel != nil {
 				// someone has added me again to an existing group??
-				// since there's no protocol to delete groups take this to create a new group with the same group ID
 				log.Printf("handshake: [%s] %d has added me again to an existing group... ignore it", p.self, msg.SignerIndex)
 			} else {
 				// !!! We can't verify the Merkle proof here !!!
@@ -289,7 +304,7 @@ func GroupChannelHandler(p *Protocol, channel *GroupChannel, msg *packet.Handsha
 		init = true
 	case packet.HandshakeUpdate:
 		if channel == nil {
-			return ErrGroupNotFound
+			return nil
 		}
 		if err := verifyProof(channel.state, msg); err != nil {
 			return ErrMerkleProofVerificationFailure
@@ -300,7 +315,7 @@ func GroupChannelHandler(p *Protocol, channel *GroupChannel, msg *packet.Handsha
 		}
 	case packet.HandshakeDelete:
 		if channel == nil {
-			return ErrGroupNotFound
+			return nil
 		}
 		if err := verifyProof(channel.state, msg); err != nil {
 			return err
@@ -311,10 +326,9 @@ func GroupChannelHandler(p *Protocol, channel *GroupChannel, msg *packet.Handsha
 				channel.message.Close()
 			}
 			eof = true
-		} else {
-			if err := channel.state.DeletePath(int(del.Index), del.Path); err != nil {
-				return err
-			}
+		}
+		if err := channel.state.DeletePath(int(del.Index), del.Path); err != nil {
+			return err
 		}
 	default:
 		return ErrUnknownHandshakeProtocol

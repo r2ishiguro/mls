@@ -250,10 +250,10 @@ func (p *Protocol) Handler(r io.Reader) error {
 		if err := GroupChannelHandler(p, channel, msg, pkt); err != nil {
 			if err == io.EOF {
 				delete(p.channels, msg.GIK.GroupId)
-				return err
+			} else {
+				log.Printf("handshake: [%s] handler error, msg = %d: %s", p.self, msg.Type, err)
+				// continue...
 			}
-			log.Printf("handshake: [%s] handler error: %s", p.self, err)
-			// continue...
 		}
 	}
 	return nil

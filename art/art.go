@@ -64,13 +64,18 @@ func (rt *RatchetTree) AddPath(path [][]byte, self int, priv crypto.GroupExponen
 func (rt *RatchetTree) UpdatePath(idx int, path [][]byte, self int, priv crypto.GroupExponent) bool {
 	direct := make([]interface{}, len(path) + 1)	// +1 for the root
 	for i, v := range path {
-		direct[i] = rt.g.Unmarshal(v)
+		if v == nil || len(v) == 0 {
+			direct[i] = nil
+		} else {
+			direct[i] = rt.g.Unmarshal(v)
+		}
 	}
-	rt.tree.Update(idx, direct)
+	rt.tree.Update(idx, direct)	// temporarily update with root=nil
 	root, cpath := rt.calculate(self, priv)
 	if root == nil {
 		return false
 	}
+	rt.tree.Update(idx, cpath[len(cpath) - 1:])	// update only the root
 	// double-check the calculated path and the path in the current tree are the same
 	tpath := rt.DirectPath(self)
 	for i, p := range tpath {
@@ -136,11 +141,10 @@ func (rt *RatchetTree) calculate(idx int, leaf crypto.GroupExponent) ([]byte, []
 	j := 0
 	path[j] = rt.g.DH(nil, x); j++
 	for _, node := range copath {
-		if node == nil {
-			continue
+		if node != nil {
+			e := rt.g.DH(node, x)
+			x = rt.g.Injection(e)
 		}
-		e := rt.g.DH(node, x)
-		x = rt.g.Injection(e)
 		path[j] = rt.g.DH(nil, x); j++
 	}
 	return rt.g.Encode(x), path

@@ -8,7 +8,6 @@ import (
 	"crypto/rand"
 	"encoding/binary"
 	"errors"
-	"fmt"
 
 	"github.com/r2ishiguro/mls"
 	"github.com/r2ishiguro/mls/ds"
@@ -134,7 +133,6 @@ func (m *Message) Receive() ([]byte, string, error) {
 	nonce := ciphertext[noncepos:keypos]
 	epoch := binary.BigEndian.Uint32(ciphertext[epochpos:noncepos])
 	if epoch != m.g.Epoch() {
-		fmt.Printf("[%s] epoch mismatch: got = %d, have = %d\n", m.p.self, epoch, m.g.Epoch())
 		return nil, "", ErrKeyGenerationMismatch
 	}
 	tag := ciphertext[tagpos:noncepos]	// including epoch
