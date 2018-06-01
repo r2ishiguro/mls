@@ -40,6 +40,11 @@ func main() {
 
 	flag.Parse()
 	keypath := *keypathp
+	flag.Usage = func() {
+		fmt.Fprintf(os.Stderr, "Usage: %s [flags] join gid | group gid | groups | users | ping gid\n", os.Args[0])
+		fmt.Fprintf(os.Stderr, "Flags:\n")
+		flag.PrintDefaults()
+	}
 
 	av := flag.Args()
 	ac := len(av)
@@ -197,6 +202,30 @@ func ping(gid string, dsAddr string, client *protocol.Protocol) {
 	}
 }
 
+func printGroup(gid string, dir *ds.DirectoryService) {
+	gik, err := dir.LookupGroup(gid)
+	if err != nil {
+		log.Print(err)
+	}
+	fmt.Printf("ID: %s, size: %d, epoch: %d\n", gik.GroupId, gik.GroupSize, gik.Epoch)
+	fmt.Printf("  SUK:\n    %x\n", gik.AddKey)
+	fmt.Printf("  ratchet frontier:\n")
+	for i := 0; i < len(gik.RatchetFrontier); i++ {
+		node := gik.RatchetFrontier[i]
+		if node == nil {
+			fmt.Printf("    nil\n")
+		} else if len(node) == 0 {
+			fmt.Printf("    0\n")
+		} else {
+			fmt.Printf("    %x\n", node)
+		}
+	}
+	fmt.Printf("  merkle frontier:\n")
+	for i := 0; i < len(gik.MerkleFrontier); i++ {
+		fmt.Printf("    %x\n", gik.MerkleFrontier[i])
+	}
+}
+
 func readIdentityKey(path string) (pub, priv []byte, err error) {
 	pub, err = ioutil.ReadFile(path + "/" + identityPubName)
 	if err == nil {
@@ -229,28 +258,4 @@ func writeIdentityKey(path string, pub, priv []byte) error {
 		os.Rename(privPath + "~", privPath)
 	}
 	return err
-}
-
-func printGroup(gid string, dir *ds.DirectoryService) {
-	gik, err := dir.LookupGroup(gid)
-	if err != nil {
-		log.Print(err)
-	}
-	fmt.Printf("ID: %s, size: %d, epoch: %d\n", gik.GroupId, gik.GroupSize, gik.Epoch)
-	fmt.Printf("  SUK:\n    %x\n", gik.AddKey)
-	fmt.Printf("  ratchet frontier:\n")
-	for i := 0; i < len(gik.RatchetFrontier); i++ {
-		node := gik.RatchetFrontier[i]
-		if node == nil {
-			fmt.Printf("    nil\n")
-		} else if len(node) == 0 {
-			fmt.Printf("    0\n")
-		} else {
-			fmt.Printf("    %x\n", node)
-		}
-	}
-	fmt.Printf("  merkle frontier:\n")
-	for i := 0; i < len(gik.MerkleFrontier); i++ {
-		fmt.Printf("    %x\n", gik.MerkleFrontier[i])
-	}
 }
