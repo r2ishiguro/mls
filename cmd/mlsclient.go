@@ -33,7 +33,7 @@ const (
 
 func main() {
 	defaultPath := os.Getenv("HOME") + "/.gnupg/"
-	keypathp := flag.String("home", defaultPath, "path to home")
+	keypathp := flag.String("key", defaultPath, "path to the key directory")
 	dsAddrp := flag.String("ds", defaultDSAddr, "ds server address")
 	dirAddrp := flag.String("dir", defaultDirAddr, "directory service address")
 	msgAddrp := flag.String("msg", defaultMsgAddr, "message service address")
