@@ -19,7 +19,7 @@ This implementation uses BFTKV (https://github.com/yahoo/bftkv) as the Authentic
 	1. `bftrw -path $GOPATH/src/github.com/yahoo/bftrw/scripts/run/keys -key key register`
 1. Run a MLS client
 	1. Build mlsclient `cd mls/cmd; go build mlsclient.go`
-	1. `mlsclient -home key join mygroup`
+	1. `mlsclient -key key join mygroup`
 
 You can run as many clients as you want by repeating the step 3 and 4. Use the unique uid (e.g., "foo[123...]@bar.com") and the key directory (e.g., "key[123...]").
 
