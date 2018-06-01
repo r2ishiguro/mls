@@ -9,7 +9,7 @@ This implementation uses BFTKV (https://github.com/yahoo/bftkv) as the Authentic
 	1. Install [GnuPG 2.x](https://www.gnupg.org/download/index.en.html)
 	1. Run `setup.sh` in bftkv/scripts
 	1. Run a BFTKV cluster `cd bftkv/scripts/run; ../run.sh`
-	1. Build a command line tool cd bftkv/cmd/bftrw; go get .`
+	1. Build a command line tool `cd bftkv/cmd/bftrw; go get .`
 1. Run Delivery Service (mlsds)
 	1. Build the server `cd mls/cmd; go build mlsds.go`
 	1. `mlsds`
@@ -21,7 +21,7 @@ This implementation uses BFTKV (https://github.com/yahoo/bftkv) as the Authentic
 	1. Build mlsclient `cd mls/cmd; go build mlsclient.go`
 	1. `mlsclient -home key join mygroup`
 
-You can make as many keys as you want for the mls client, by repeating the step 3 and 4.
+You can run as many clients as you want by repeating the step 3 and 4. Use the unique uid (e.g., "foo[123...]@bar.com") and the key directory (e.g., "key[123...]").
 
 ## License
 Copyright 2018, Oath Inc
